@@ -242,6 +242,18 @@ describe("dream skin theme helpers", () => {
     assert.match(source, /overview\?\.latest_launch\?\.debug_port\s*\?\?/);
   });
 
+  it("does not ship sponsored recommendations in the personal fork", async () => {
+    const app = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
+    const renderer = await readFile(new URL("../../../assets/inject/renderer-inject.js", import.meta.url), "utf8");
+    const readme = await readFile(new URL("../../../README.md", import.meta.url), "utf8");
+
+    assert.doesNotMatch(app, /id: "recommendations"/);
+    assert.doesNotMatch(app, /jojocode-overview/);
+    assert.doesNotMatch(renderer, /BigPizzaV3\/Ad-List/);
+    assert.doesNotMatch(renderer, /data-codex-plus-panel="sponsor"/);
+    assert.match(readme, /## \u4e2a\u4eba\u4f7f\u7528\u8bf4\u660e/);
+  });
+
   it("keeps theme draft separate from backend settings until explicit activation", async () => {
     const source = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
 
