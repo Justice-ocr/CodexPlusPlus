@@ -338,13 +338,6 @@ pub struct RemoveEnvConflictsPayload {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SaveRelayFileRequest {
-    pub kind: String,
-    pub contents: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct BackfillRelayProfileRequest {
     pub settings: BackendSettings,
     pub profile_id: String,
@@ -2656,25 +2649,6 @@ pub fn remove_env_conflicts(
     }
 }
 
-#[tauri::command]
-pub fn save_relay_file(request: SaveRelayFileRequest) -> CommandResult<RelayFilesPayload> {
-    let home = codex_plus_core::relay_config::default_codex_home_dir();
-    match save_relay_file_in_home(&home, &request.kind, &request.contents)
-        .and_then(|_| relay_files_payload_from_home(&home))
-    {
-        Ok(payload) => ok("配置文件已保存。", payload),
-        Err(error) => failed(
-            &format!("保存配置文件失败：{error}"),
-            relay_files_payload_from_home(&home).unwrap_or_else(|_| RelayFilesPayload {
-                config_path: home.join("config.toml").to_string_lossy().to_string(),
-                auth_path: home.join("auth.json").to_string_lossy().to_string(),
-                config_contents: String::new(),
-                auth_contents: String::new(),
-            }),
-        ),
-    }
-}
-
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayProfileSwitchRequest {
@@ -3843,23 +3817,6 @@ fn relay_files_payload_from_home(home: &std::path::Path) -> anyhow::Result<Relay
     })
 }
 
-fn save_relay_file_in_home(
-    home: &std::path::Path,
-    kind: &str,
-    contents: &str,
-) -> anyhow::Result<()> {
-    let path = match kind {
-        "config" => home.join("config.toml"),
-        "auth" => home.join("auth.json"),
-        other => anyhow::bail!("未知配置文件类型：{other}"),
-    };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, contents)?;
-    Ok(())
-}
-
 fn read_optional_text_file(path: &std::path::Path) -> anyhow::Result<String> {
     match std::fs::read_to_string(path) {
         Ok(contents) => Ok(contents),
@@ -4930,24 +4887,6 @@ mod tests {
         assert!(applied.contains("model_provider = \"ai\""));
         assert!(applied.contains("[model_providers.ai]"));
         assert!(!applied.contains("[model_providers.custom]"));
-    }
-
-    #[test]
-    fn save_relay_file_in_home_only_allows_known_files() {
-        let temp = tempfile::tempdir().unwrap();
-
-        save_relay_file_in_home(temp.path(), "config", "model = \"gpt-5\"\n").unwrap();
-        save_relay_file_in_home(temp.path(), "auth", "{}\n").unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(temp.path().join("config.toml")).unwrap(),
-            "model = \"gpt-5\"\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(temp.path().join("auth.json")).unwrap(),
-            "{}\n"
-        );
-        assert!(save_relay_file_in_home(temp.path(), "../bad", "").is_err());
     }
 
     #[test]
