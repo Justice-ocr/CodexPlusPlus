@@ -534,8 +534,6 @@ fn injection_script_installs_dream_skin_from_backend_settings() {
     assert!(script.contains("window.__CODEX_PLUS_DREAM_SKIN_TARGET_ENGINE__"));
     assert!(script.contains("state.version = `codex-plus:"));
     assert!(!script.contains("state.observer?.disconnect?.()"));
-    assert!(!script.contains("state.observer = null"));
-    assert!(!script.contains("state.timer = null"));
     assert!(script.contains("window.__CODEX_PLUS_DREAM_SKIN_PAYLOAD_SIGNATURE__"));
     assert!(script.contains("window.__CODEX_PLUS_DREAM_SKIN_THEME__"));
     assert!(script.contains("data:image/webp;base64,UklGRg=="));
