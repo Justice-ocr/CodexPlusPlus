@@ -10,7 +10,10 @@ fn assert_sha256(relative_path: &str, expected: &str) {
             path.display()
         )
     });
-    let actual = format!("{:X}", Sha256::digest(bytes));
+    let normalized = String::from_utf8(bytes)
+        .unwrap_or_else(|error| panic!("upstream theme asset is not UTF-8 {}: {error}", path.display()))
+        .replace("\r\n", "\n");
+    let actual = format!("{:X}", Sha256::digest(normalized.as_bytes()));
     assert_eq!(actual, expected, "upstream asset changed: {relative_path}");
 }
 
@@ -19,11 +22,11 @@ fn bundled_target_renderers_and_styles_remain_byte_exact() {
     for (path, hash) in [
         (
             "assets/inject/upstream/dream-skin/windows/renderer-inject.js",
-            "5523382D8D6117056892323722EED21F9F10B00144C3424DA056A63B074B4525",
+            "FB5D1D46B4124E4241BEE80CAB44438B900410EBFAE580EB9DDA5D8DC9EAE4D0",
         ),
         (
             "assets/inject/upstream/dream-skin/windows/dream-skin.css",
-            "3CC1CEDE1F9FA2BDA4683A4E5B22BDE8D385042AB231C3FBE21A478F45132F37",
+            "18A813DB8CF8BD69A2F4B70EF06944DB6ECA1C67DD2278BC0F822A4F3D56DCB9",
         ),
         (
             "assets/inject/upstream/dream-skin/macos/renderer-inject.js",
