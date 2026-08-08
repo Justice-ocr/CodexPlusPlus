@@ -129,6 +129,10 @@ describe("dream skin theme helpers", () => {
       new URL("../../../crates/codex-plus-core/src/assets.rs", import.meta.url),
       "utf8",
     );
+    const css = await readFile(
+      new URL("../../../assets/inject/upstream/dream-skin/windows/dream-skin.css", import.meta.url),
+      "utf8",
+    );
 
     assert.match(renderer, /const shellMain = document\.querySelector\("main\.main-surface"\)/);
     assert.doesNotMatch(renderer, /!shellMain\s*\|\|\s*!shellSidebar/);
@@ -136,7 +140,10 @@ describe("dream skin theme helpers", () => {
     assert.match(compatibility, /shellMain\.classList\.add\("main-surface"\)/);
     assert.match(compatibility, /data-codex-plus-dream-skin-main-surface/);
     assert.match(compatibility, /clearDreamSkinMainSurfaceCompatibility\(\)/);
-    assert.match(assets, /DREAM_SKIN_RENDERER_REVISION: &str = "18"/);
+    assert.match(assets, /DREAM_SKIN_RENDERER_REVISION: &str = "19"/);
+    assert.match(renderer, /\[role="main"\]:has\(\[data-testid="home-icon"\]\), \[role="main"\]\.home-main-content/);
+    assert.match(css, /:has\(> \.home-banners\)/);
+    assert.match(css, /div:nth-child\(2\)/);
   });
 
   it("extends the Windows wallpaper treatment to right and bottom dock panels", async () => {

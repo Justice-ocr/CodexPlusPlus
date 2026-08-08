@@ -388,7 +388,9 @@
       style.dataset.dreamVersion = "3";
     }
 
-    const home = document.querySelector('[role="main"]:has([data-testid="home-icon"])');
+    const home = document.querySelector(
+      '[role="main"]:has([data-testid="home-icon"]), [role="main"].home-main-content',
+    );
     for (const candidate of document.querySelectorAll('[role="main"]')) {
       candidate.classList.toggle("dream-home", candidate === home);
       candidate.classList.toggle("dream-task", candidate !== home);
