@@ -145,5 +145,15 @@ verify_app "$STAGE/Codex++ 管理工具.app"
 
 ln -s /Applications "$STAGE/Applications"
 
-hdiutil create -volname "Codex++" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+for attempt in 1 2 3; do
+  rm -f "$DMG"
+  if hdiutil create -volname "Codex++" -srcfolder "$STAGE" -ov -format UDZO "$DMG"; then
+    break
+  fi
+  if [ "$attempt" -eq 3 ]; then
+    echo "error: hdiutil could not create the DMG after $attempt attempts" >&2
+    exit 1
+  fi
+  sleep "$attempt"
+done
 echo "$DMG"
