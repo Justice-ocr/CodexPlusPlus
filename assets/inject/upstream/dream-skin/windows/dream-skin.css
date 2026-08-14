@@ -200,6 +200,10 @@ html.codex-dream-skin .dream-home {
   background: var(--dream-surface) !important;
 }
 
+html.codex-dream-skin .dream-home[data-dream-home-layout="structured"] {
+  background: var(--dream-surface) !important;
+}
+
 :is(.dream-home > div:first-child:not(:has(> .home-banners)), .dream-home > div:first-child:has(> .home-banners) > div:nth-child(2)) {
   min-height: 100% !important;
   padding-top: 24px !important;
@@ -659,4 +663,23 @@ html.codex-dream-skin.dream-art-wide main.main-surface
     scroll-behavior: auto !important;
     transition-duration: .01ms !important;
   }
+}
+
+/* Keep transient new-chat drafts on native geometry and preserve interaction
+   with the sidebar and composer while the skin is active. */
+html.codex-dream-skin aside.app-shell-left-panel,
+html.codex-dream-skin aside.app-shell-left-panel button,
+html.codex-dream-skin aside.app-shell-left-panel a,
+html.codex-dream-skin button[aria-label^="Start new chat in "],
+html.codex-dream-skin [data-app-action-sidebar-project-row],
+html.codex-dream-skin .composer-surface-chrome,
+html.codex-dream-skin .composer-footer,
+html.codex-dream-skin .ProseMirror,
+html.codex-dream-skin [role="main"] {
+  pointer-events: auto !important;
+}
+
+html.codex-dream-skin .dream-home:not([data-dream-home-layout="structured"]) {
+  min-height: 0 !important;
+  overflow-y: auto !important;
 }

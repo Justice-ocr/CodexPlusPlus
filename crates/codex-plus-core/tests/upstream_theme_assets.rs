@@ -10,10 +10,19 @@ fn assert_sha256(relative_path: &str, expected: &str) {
             path.display()
         )
     });
-    let normalized = String::from_utf8(bytes)
-        .unwrap_or_else(|error| panic!("upstream theme asset is not UTF-8 {}: {error}", path.display()))
-        .replace("\r\n", "\n");
-    let actual = format!("{:X}", Sha256::digest(normalized.as_bytes()));
+    // Git may materialize these text assets with CRLF on Windows. Hash the
+    // repository's canonical LF representation so the guard is platform
+    // independent while still detecting substantive asset changes.
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            index += 1;
+        }
+        normalized.push(bytes[index]);
+        index += 1;
+    }
+    let actual = format!("{:X}", Sha256::digest(normalized));
     assert_eq!(actual, expected, "upstream asset changed: {relative_path}");
 }
 
@@ -22,11 +31,11 @@ fn bundled_target_renderers_and_styles_remain_byte_exact() {
     for (path, hash) in [
         (
             "assets/inject/upstream/dream-skin/windows/renderer-inject.js",
-            "FB5D1D46B4124E4241BEE80CAB44438B900410EBFAE580EB9DDA5D8DC9EAE4D0",
+            "12E17E1C23D301F22488BB5D70090E89C85945B349DFC027697343671623E251",
         ),
         (
             "assets/inject/upstream/dream-skin/windows/dream-skin.css",
-            "18A813DB8CF8BD69A2F4B70EF06944DB6ECA1C67DD2278BC0F822A4F3D56DCB9",
+            "A87C04EFBDB81B2DD5BA096C22537C24EC0ECA30D1F138EFA45139BE70FD24E4",
         ),
         (
             "assets/inject/upstream/dream-skin/macos/renderer-inject.js",
