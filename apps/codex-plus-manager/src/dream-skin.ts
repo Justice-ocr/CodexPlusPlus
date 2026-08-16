@@ -23,6 +23,7 @@ export type DreamSkinThemeConfig = {
   projectLabel: string;
   statusText: string;
   quote: string;
+  fontFamily?: string;
   colors?: DreamSkinColors;
   appearance?: "auto" | "light" | "dark";
   art?: {

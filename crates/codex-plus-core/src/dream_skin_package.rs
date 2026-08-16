@@ -993,6 +993,7 @@ fn validate_theme(
         "projectLabel",
         "statusText",
         "quote",
+        "fontFamily",
         "promoTitle",
         "promoSub",
         "promoUrl",
@@ -1049,6 +1050,18 @@ fn validate_theme(
             .is_none_or(|appearance| !matches!(appearance, "auto" | "light" | "dark"))
     }) {
         bail!("theme.json 的链接或外观字段无效");
+    }
+    if object.get("fontFamily").is_some_and(|value| {
+        value.as_str().is_none_or(|font| {
+            let font = font.trim();
+            font.is_empty()
+                || font.len() > 80
+                || !font
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'_' | b'-'))
+        })
+    }) {
+        bail!("theme.json.fontFamily is invalid");
     }
     if let Some(art) = object.get("art") {
         validate_theme_art(art)?;

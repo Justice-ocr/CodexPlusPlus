@@ -58,7 +58,7 @@
 html.codex-dream-skin body {
   background: var(--dream-canvas) !important;
   color: var(--dream-text) !important;
-  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif !important;
+  font-family: var(--dream-font-family, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif) !important;
 }
 
 html.codex-dream-skin aside.app-shell-left-panel {
