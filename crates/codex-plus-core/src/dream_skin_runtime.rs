@@ -248,23 +248,13 @@ pub async fn dream_skin_status(debug_port: u16) -> DreamSkinRuntimeStatus {
         };
     }
 
-    let mut identity = platform_identity_check(&settings.codex_app_path);
-    if identity.level == DreamSkinCheckLevel::Fail {
-        return DreamSkinRuntimeStatus {
-            state: DreamSkinState::Fail,
-            enabled: true,
-            paused: false,
-            live_applied: false,
-            checks: vec![identity],
-        };
-    }
+    let identity = platform_identity_check_non_blocking(&settings.codex_app_path);
     let verification = match verify_dream_skin(debug_port, None).await {
         Ok(result) => result,
         Err(_) => return DreamSkinRuntimeStatus::not_running(true, false),
     };
     let state = verification.state;
     let live_applied = verification.pass;
-    identity.level = DreamSkinCheckLevel::Pass;
     let mut checks = vec![identity];
     checks.extend(verification.checks);
     DreamSkinRuntimeStatus {
@@ -286,10 +276,6 @@ pub async fn apply_dream_skin_live(
     }
     if settings.codex_app_dream_skin_paused {
         bail!("Dream Skin is paused");
-    }
-    let identity = platform_identity_check(&settings.codex_app_path);
-    if identity.level == DreamSkinCheckLevel::Fail {
-        bail!("{}", identity.message);
     }
     let target = primary_target(debug_port).await?;
     let websocket = target
@@ -501,6 +487,18 @@ fn platform_identity_check(configured_path: &str) -> DreamSkinCheck {
         );
     };
     platform_identity_check_for_dir(&app_dir)
+}
+
+fn platform_identity_check_non_blocking(configured_path: &str) -> DreamSkinCheck {
+    let mut result = platform_identity_check(configured_path);
+    if result.level == DreamSkinCheckLevel::Fail {
+        result.level = DreamSkinCheckLevel::Warning;
+        result.message = format!(
+            "{}（仅作提示，不会阻断个人构建版皮肤注入）",
+            result.message
+        );
+    }
+    result
 }
 
 #[cfg(windows)]
