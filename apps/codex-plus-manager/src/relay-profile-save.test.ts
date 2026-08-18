@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 describe("relay profile saving", () => {
-  it("applies an active profile through the guarded switch transaction", async () => {
+  it("persists settings and synchronizes active relay files", async () => {
     const app = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
     const commands = await readFile(new URL("../src-tauri/src/commands.rs", import.meta.url), "utf8");
     const saveStart = app.indexOf("const saveDraft = async () =>");
@@ -12,8 +12,9 @@ describe("relay profile saving", () => {
 
     assert.ok(saveStart >= 0);
     assert.ok(saveEnd > saveStart);
-    assert.match(saveDraft, /actions\.switchRelayProfile\(next, ""\)/);
-    assert.doesNotMatch(saveDraft, /saveRelayFile/);
-    assert.doesNotMatch(commands, /save_relay_file/);
+    assert.match(saveDraft, /await onFormChange\(next\)/);
+    assert.match(saveDraft, /actions\.saveRelayFile\(\s*[\"']config[\"']/);
+    assert.match(saveDraft, /actions\.saveRelayFile\(\s*[\"']auth[\"']/);
+    assert.match(commands, /pub fn save_relay_file\(/);
   });
 });

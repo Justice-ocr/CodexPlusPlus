@@ -54,6 +54,7 @@ import {
   RefreshCw,
   RotateCcw,
   Rocket,
+  ScanLine,
   Save,
   Search,
   Settings,
@@ -96,6 +97,7 @@ import {
 } from "./model-windows";
 import { relayAuthForLiveDraft } from "./relay-live-files";
 import { resolveProviderSyncCompletion } from "./provider-sync-flow";
+import { resolveLaunchStatus } from "./launch-status";
 import {
   defaultDreamSkinTheme,
   defaultDreamSkinColors,
@@ -168,6 +170,10 @@ type OverviewResult = CommandResult<{
   logs_path: string;
 }>;
 
+type LaunchCommandResult = CommandResult<{
+  launchStartedAtMs?: number;
+}>;
+
 type PluginMarketplaceRepairResult = CommandResult<{
   codexHome: string;
   marketplaceRoot?: string | null;
@@ -201,7 +207,6 @@ type BackendSettings = {
   providerSyncLastSelectedProvider: string;
   relayProfilesEnabled: boolean;
   enhancementsEnabled: boolean;
-  computerUseGuardEnabled: boolean;
   codexAppPluginMarketplaceUnlock: boolean;
   codexAppModelWhitelistUnlock: boolean;
   codexAppSessionDelete: boolean;
@@ -209,7 +214,6 @@ type BackendSettings = {
   codexAppPasteFix: boolean;
   codexAppForceChineseLocale: boolean;
   codexAppFastStartup: boolean;
-  codexAppProjectMove: boolean;
   codexAppThreadIdBadge: boolean;
   codexAppConversationView: boolean;
   codexAppThreadScrollRestore: boolean;
@@ -242,6 +246,16 @@ type BackendSettings = {
   codexAppDreamSkinThemeConfig: DreamSkinThemeConfig;
   codexAppDreamSkinImagePath: string;
   codexGoalsEnabled: boolean;
+  weixinConnectEnabled: boolean;
+  weixinConnectBaseUrl: string;
+  weixinConnectToken: string;
+  weixinConnectAccountId: string;
+  weixinConnectAllowFrom: string;
+  weixinConnectRouteTag: string;
+  weixinConnectWorkDir: string;
+  weixinConnectModel: string;
+  weixinConnectSandbox: "read-only" | "workspace-write" | "danger-full-access";
+  weixinConnectCodexPath: string;
   launchMode: LaunchMode;
   relayBaseUrl: string;
   relayApiKey: string;
@@ -365,6 +379,25 @@ type SettingsResult = CommandResult<{
   settings: BackendSettings;
   settings_path: string;
   user_scripts: UserScriptInventory;
+}>;
+
+type WeixinConnectStatusResult = CommandResult<{
+  state: string;
+  message: string;
+  accountId: string;
+  hasToken: boolean;
+  lastPeerId: string;
+  lastMessageAtMs: number;
+  processedMessages: number;
+}>;
+
+type WeixinQrResult = CommandResult<{
+  qrStatus: string;
+  qrContent: string;
+  qrSvg: string;
+  accountId: string;
+  linkedUserId: string;
+  hasToken: boolean;
 }>;
 
 type RelayResult = CommandResult<{
@@ -756,7 +789,7 @@ type StartupResult = CommandResult<{
   showUpdate: boolean;
 }>;
 
-type Route = "overview" | "relay" | "relayEnvironment" | "sessions" | "context" | "enhance" | "dreamSkin" | "zedRemote" | "userScripts" | "maintenance" | "about" | "settings";
+type Route = "overview" | "relay" | "relayEnvironment" | "sessions" | "context" | "weixin" | "enhance" | "dreamSkin" | "zedRemote" | "userScripts" | "maintenance" | "about" | "settings";
 type Theme = "dark" | "light";
 
 const routes: Array<{ id: Route; label: string; icon: LucideIcon; badge?: string }> = [
@@ -764,6 +797,7 @@ const routes: Array<{ id: Route; label: string; icon: LucideIcon; badge?: string
   { id: "relay", label: t("供应商配置"), icon: KeyRound },
   { id: "sessions", label: t("会话管理"), icon: MessageCircle },
   { id: "context", label: t("工具与插件"), icon: Network },
+  { id: "weixin", label: t("微信连接"), icon: ScanLine },
   { id: "enhance", label: t("Codex增强"), icon: Hammer },
   { id: "dreamSkin", label: t("皮肤管理"), icon: Palette },
   { id: "zedRemote", label: t("Zed 远程项目"), icon: ExternalLink },
@@ -772,6 +806,22 @@ const routes: Array<{ id: Route; label: string; icon: LucideIcon; badge?: string
   { id: "about", label: t("关于"), icon: Info },
   { id: "settings", label: t("设置"), icon: Settings },
   { id: "relayEnvironment", label: t("中转站环境配置检测"), icon: ShieldCheck },
+];
+
+const navigationSections: Array<{ label: string; routes: Route[]; placement?: "bottom" }> = [
+  {
+    label: t("工作区"),
+    routes: ["overview", "relay", "sessions", "context"],
+  },
+  {
+    label: t("扩展"),
+    routes: ["weixin", "enhance", "dreamSkin", "zedRemote", "userScripts"],
+  },
+  {
+    label: t("系统"),
+    routes: ["maintenance", "about", "settings"],
+    placement: "bottom",
+  },
 ];
 
 const defaultSettings: BackendSettings = {
@@ -783,7 +833,6 @@ const defaultSettings: BackendSettings = {
   providerSyncLastSelectedProvider: "",
   relayProfilesEnabled: true,
   enhancementsEnabled: true,
-  computerUseGuardEnabled: false,
   codexAppPluginMarketplaceUnlock: true,
   codexAppModelWhitelistUnlock: true,
   codexAppSessionDelete: true,
@@ -791,7 +840,6 @@ const defaultSettings: BackendSettings = {
   codexAppPasteFix: false,
   codexAppForceChineseLocale: true,
   codexAppFastStartup: false,
-  codexAppProjectMove: true,
   codexAppThreadIdBadge: false,
   codexAppConversationView: false,
   codexAppThreadScrollRestore: true,
@@ -824,6 +872,16 @@ const defaultSettings: BackendSettings = {
   codexAppDreamSkinThemeConfig: defaultDreamSkinTheme(),
   codexAppDreamSkinImagePath: "",
   codexGoalsEnabled: false,
+  weixinConnectEnabled: false,
+  weixinConnectBaseUrl: "https://ilinkai.weixin.qq.com",
+  weixinConnectToken: "",
+  weixinConnectAccountId: "",
+  weixinConnectAllowFrom: "",
+  weixinConnectRouteTag: "",
+  weixinConnectWorkDir: "",
+  weixinConnectModel: "",
+  weixinConnectSandbox: "read-only",
+  weixinConnectCodexPath: "",
   launchMode: "patch",
   relayBaseUrl: "",
   relayApiKey: "",
@@ -883,6 +941,8 @@ export function App() {
   } | null>(null);
   const [overview, setOverview] = useState<OverviewResult | null>(null);
   const [settings, setSettings] = useState<SettingsResult | null>(null);
+  const [weixinStatus, setWeixinStatus] = useState<WeixinConnectStatusResult | null>(null);
+  const [weixinQr, setWeixinQr] = useState<WeixinQrResult | null>(null);
   const [relay, setRelay] = useState<RelayResult | null>(null);
   const [relayFiles, setRelayFiles] = useState<RelayFilesResult | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflictsResult | null>(null);
@@ -947,6 +1007,10 @@ export function App() {
       && dreamSkinThemeDraft
       && isDreamSkinDraftDirty(savedDreamSkinThemeDraft, dreamSkinThemeDraft),
   );
+  const settingsDirty = useMemo(
+    () => Boolean(settings && !backendSettingsEqual(settingsForm, settings.settings)),
+    [settings, settingsForm],
+  );
 
   const call = <T,>(command: string, args?: Record<string, unknown>) => invoke<T>(command, args);
 
@@ -992,6 +1056,15 @@ export function App() {
       return normalized;
     }
     return null;
+  };
+
+  const refreshWeixinStatus = async (silent = false) => {
+    const result = await run(() => call<WeixinConnectStatusResult>("weixin_connect_status"));
+    if (result) {
+      setWeixinStatus(result);
+      if (!silent) showResultNotice(t("微信连接"), result, { silentSuccess: true });
+    }
+    return result;
   };
 
   const dreamSkinRequest = (screenshotPath?: string) => ({
@@ -1706,6 +1779,7 @@ export function App() {
     if (next === "overview") await refreshOverview(true);
     if (next === "relay") {
       await refreshSettings(true);
+      await refreshWeixinStatus(true);
       await refreshRelay(true);
       await refreshRelayFiles(true);
       await refreshEnvConflicts(true);
@@ -1725,6 +1799,11 @@ export function App() {
       await refreshSettings(true);
       await refreshRelayFiles(true);
       await refreshLiveContextEntries(true);
+    }
+    if (next === "weixin") {
+      await refreshSettings(true);
+      await refreshWeixinStatus(true);
+      await refreshLocalSessions(true);
     }
     if (next === "dreamSkin") {
       await refreshSettings(true);
@@ -1752,25 +1831,37 @@ export function App() {
 
   const launch = async () => {
     const result = await launchCommand("launch_codex_plus");
-    if (result) {
+    if (!result) return;
+    if (!isSuccessStatus(result.status)) {
       showNotice(t("启动任务"), result.message, result.status);
-      await refreshOverview(true);
+      return;
     }
+    showNotice(t("启动任务"), t("正在等待 Codex 启动结果…"), "accepted");
+    const completion = await waitForLaunchCompletion(result.launchStartedAtMs);
+    showLaunchCompletionNotice(t("启动任务"), completion);
   };
 
   const restart = async (syncActiveRelay = false) => {
     const result = await launchCommand("restart_codex_plus", syncActiveRelay);
-    if (result) {
+    if (!result) return false;
+    if (!isSuccessStatus(result.status)) {
       showNotice(t("重启 Codex++"), result.message, result.status);
-      if (isSuccessStatus(result.status)) setPendingDreamSkinRestart(null);
-      await refreshOverview(true);
+      return false;
     }
-    return !!result && isSuccessStatus(result.status);
+    showNotice(t("重启 Codex++"), t("正在等待 Codex 重新启动…"), "accepted");
+    const completion = await waitForLaunchCompletion(result.launchStartedAtMs);
+    showLaunchCompletionNotice(t("重启 Codex++"), completion);
+    const succeeded = Boolean(
+      completion
+      && resolveLaunchStatus(completion.latest_launch, result.launchStartedAtMs ?? 0) === "success",
+    );
+    if (succeeded) setPendingDreamSkinRestart(null);
+    return succeeded;
   };
 
   const launchCommand = async (command: "launch_codex_plus" | "restart_codex_plus", syncActiveRelay = false) => {
     const result = await run(() =>
-      call<CommandResult<Record<string, unknown>>>(command, {
+      call<LaunchCommandResult>(command, {
         request: {
           appPath: launchForm.appPath,
           debugPort: numberOrDefault(launchForm.debugPort, 9229),
@@ -1780,6 +1871,41 @@ export function App() {
       }),
     );
     return result;
+  };
+
+  const waitForLaunchCompletion = async (requestStartedAtMs?: number) => {
+    if (!requestStartedAtMs) {
+      await refreshOverview(true);
+      return null;
+    }
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const result = await run(() => call<OverviewResult>("load_overview"));
+      if (result) {
+        setOverview(result);
+        const resolution = resolveLaunchStatus(result.latest_launch, requestStartedAtMs);
+        if (resolution === "success" || resolution === "failed") return result;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 400));
+    }
+    await refreshOverview(true);
+    return null;
+  };
+
+  const showLaunchCompletionNotice = (title: string, result: OverviewResult | null) => {
+    const status = result?.latest_launch;
+    if (!status) {
+      showNotice(title, t("启动仍在后台进行，可在概览的“最近启动”中查看状态。"), "accepted");
+      return;
+    }
+    if (["failed", "crashed", "stopped"].includes(status.status)) {
+      showNotice(title, status.message || t("Codex 启动失败。"), "failed");
+      return;
+    }
+    const message = status.status === "running_degraded"
+      ? t("Codex 已启动，增强功能仍在等待页面连接。")
+      : t("Codex 已成功启动。");
+    showNotice(title, message, "ok");
   };
 
   const repairPluginMarketplace = async () => {
@@ -2013,6 +2139,51 @@ export function App() {
     return null;
   };
 
+  const beginWeixinQrLogin = async () => {
+    const result = await run(() => call<WeixinQrResult>("weixin_connect_qr_start", {
+      baseUrl: settingsForm.weixinConnectBaseUrl,
+      routeTag: settingsForm.weixinConnectRouteTag,
+    }));
+    if (!result) return;
+    setWeixinQr(result);
+    showResultNotice(t("微信扫码登录"), result, { silentSuccess: true });
+  };
+
+  const startWeixinConnect = async () => {
+    const saved = await saveSettingsValue(settingsForm, true);
+    if (!saved) return;
+    const result = await run(() => call<WeixinConnectStatusResult>("weixin_connect_start"));
+    if (!result) return;
+    setWeixinStatus(result);
+    showResultNotice(t("微信连接"), result);
+    await refreshSettings(true);
+  };
+
+  const stopWeixinConnect = async () => {
+    const result = await run(() => call<WeixinConnectStatusResult>("weixin_connect_stop"));
+    if (!result) return;
+    setWeixinStatus(result);
+    showResultNotice(t("微信连接"), result);
+    await refreshSettings(true);
+  };
+
+  const chooseWeixinPath = async (kind: "workDir" | "codexPath") => {
+    try {
+      const selected = await open({
+        directory: kind === "workDir",
+        multiple: false,
+        title: kind === "workDir" ? t("选择微信连接工作目录") : t("选择 Codex CLI"),
+      });
+      if (typeof selected !== "string" || !selected.trim()) return;
+      setSettingsForm((current) => ({
+        ...current,
+        [kind === "workDir" ? "weixinConnectWorkDir" : "weixinConnectCodexPath"]: selected.trim(),
+      }));
+    } catch (error) {
+      showNotice(t("微信连接"), stringifyError(error), "failed");
+    }
+  };
+
   const resetSettings = async () => {
     const result = await run(() => call<SettingsResult>("reset_settings"));
     if (result) {
@@ -2030,7 +2201,6 @@ export function App() {
       showNotice(t("图片覆盖层"), result.message, result.status);
     }
   };
-
 
   const refreshProviderSyncTargets = async (silent = false) => {
     const result = await run(() => call<ProviderSyncTargetsResult>("load_provider_sync_targets"));
@@ -2215,6 +2385,16 @@ export function App() {
     return !!result && isSuccessStatus(result.status) && !result.configured;
   };
 
+  const saveRelayFile = async (kind: "config" | "auth", contents: string, silent = false) => {
+    const result = await run(() => call<RelayFilesResult>("save_relay_file", { request: { kind, contents } }));
+    if (result) {
+      setRelayFiles(result);
+      if (!silent || !isSuccessStatus(result.status)) {
+        showNotice(kind === "config" ? "config.toml" : "auth.json", result.message, result.status);
+      }
+      await refreshRelay(true);
+    }
+  };
 
   const upsertContextEntry = async (next: BackendSettings, kind: ContextKind, id: string, tomlBody: string) => {
     const result = await run(() =>
@@ -2304,15 +2484,15 @@ export function App() {
     if (result) showNotice(t("纯 API 模式"), t("已切换到纯 API；Codex增强已设为完整增强。"), result.status);
   };
 
-  const switchRelayProfile = async (next: BackendSettings, previousActiveRelayId = settingsForm.activeRelayId): Promise<boolean> => {
+  const switchRelayProfile = async (next: BackendSettings, previousActiveRelayId = settingsForm.activeRelayId) => {
     if (relaySwitching) {
       showNotice(t("供应商切换中"), t("上一次切换还没有完成，请稍后再试。"), "failed");
-      return false;
+      return;
     }
     let switchSettings = normalizeSettings(next);
     if (!switchSettings.relayProfilesEnabled) {
       showNotice(t("供应商配置已关闭"), t("当前不会写入 Codex config.toml / auth.json。打开供应商配置总开关后再切换。"), "failed");
-      return false;
+      return;
     }
     const targetBeforeSnapshot = activeRelayProfile(switchSettings);
     logDiagnostic("switchRelayProfile.start", {
@@ -2330,7 +2510,7 @@ export function App() {
         error: validationError,
       });
       showNotice(t("供应商配置可能不正确"), validationError, "failed");
-      return false;
+      return;
     }
     switchSettings = await snapshotActiveRelayFilesBeforeSwitch(switchSettings, previousActiveRelayId);
     const selectedAfterSave = activeRelayProfile(switchSettings);
@@ -2353,7 +2533,7 @@ export function App() {
         logDiagnostic("switchRelayProfile.apply_no_result", {
           targetRelayId: selectedAfterSave.id,
         });
-        return false;
+        return;
       }
       const selectedSettings = normalizeSettings(result.settings);
       setSettings({
@@ -2378,7 +2558,7 @@ export function App() {
           activeRelayId: selectedSettings.activeRelayId,
         });
         showNotice(t("供应商切换"), result.message, result.status);
-        return false;
+        return;
       }
       const currentSelected = activeRelayProfile(selectedSettings);
       logDiagnostic("switchRelayProfile.ok", {
@@ -2389,8 +2569,6 @@ export function App() {
     } finally {
       setRelaySwitching(false);
     }
-    return true;
-
   };
 
   const snapshotActiveRelayFilesBeforeSwitch = async (
@@ -2487,6 +2665,43 @@ export function App() {
     }, 1200);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!weixinQr || !["", "wait", "scaned"].includes(weixinQr.qrStatus)) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const result = await call<WeixinQrResult>("weixin_connect_qr_status");
+        if (cancelled) return;
+        setWeixinQr(result);
+        if (result.qrStatus === "confirmed") {
+          await refreshSettings(true);
+          await refreshWeixinStatus(true);
+          showNotice(t("微信扫码登录"), result.message, result.status);
+          return;
+        }
+        if (!isSuccessStatus(result.status) || result.qrStatus === "expired") {
+          showResultNotice(t("微信扫码登录"), result);
+          return;
+        }
+        timer = window.setTimeout(poll, 1_000);
+      } catch (error) {
+        if (!cancelled) showNotice(t("微信扫码登录"), stringifyError(error), "failed");
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [weixinQr?.qrStatus, weixinQr?.qrContent]);
+
+  useEffect(() => {
+    if (route !== "weixin") return;
+    const timer = window.setInterval(() => void refreshWeixinStatus(true), 2_000);
+    return () => window.clearInterval(timer);
+  }, [route]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -2733,6 +2948,7 @@ export function App() {
       applyRelayInjection,
       applyPureApiInjection,
       clearRelayInjection,
+      saveRelayFile,
       upsertContextEntry,
       deleteContextEntry,
       extractRelayCommonConfig,
@@ -2792,25 +3008,32 @@ export function App() {
             <div className="brand-subtitle">{t("管理控制台")}</div>
           </div>
         </div>
-        <nav className="nav">
-          {routes.map((item) => {
-            const Icon = item.icon;
-            return (
-            <button
-              className={`nav-item ${route === item.id ? "active" : ""}`}
-              key={item.id}
-              onClick={() => void navigate(item.id)}
-              title={item.label}
-              type="button"
-            >
-              <span className="nav-icon">
-                <Icon className="h-4 w-4" aria-hidden="true" />
-              </span>
-              <span className="nav-label">{item.label}</span>
-              {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
-            </button>
-          );
-          })}
+        <nav className="nav" aria-label={t("主导航")}>
+          {navigationSections.map((section) => (
+            <div className={`nav-section ${section.placement === "bottom" ? "nav-section-bottom" : ""}`} key={section.label}>
+              <div className="nav-section-label">{section.label}</div>
+              {section.routes.map((routeId) => {
+                const item = routes.find((candidate) => candidate.id === routeId);
+                if (!item) return null;
+                const Icon = item.icon;
+                return (
+                  <button
+                    className={`nav-item ${route === item.id ? "active" : ""}`}
+                    key={item.id}
+                    onClick={() => void navigate(item.id)}
+                    title={item.label}
+                    type="button"
+                  >
+                    <span className="nav-icon">
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span className="nav-label">{item.label}</span>
+                    {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </aside>
       <main className="workspace">
@@ -2887,8 +3110,26 @@ export function App() {
               actions={actions}
             />
           ) : null}
+          {route === "weixin" ? (
+            <WeixinConnectScreen
+              form={settingsForm}
+              status={weixinStatus}
+              qr={weixinQr}
+              sessions={localSessions?.sessions ?? []}
+              onFormChange={setSettingsForm}
+              onSave={() => void saveSettings()}
+              onQrLogin={() => void beginWeixinQrLogin()}
+              onStart={() => void startWeixinConnect()}
+              onStop={() => void stopWeixinConnect()}
+              onChooseWorkDir={() => void chooseWeixinPath("workDir")}
+              onChooseCodexPath={() => void chooseWeixinPath("codexPath")}
+              onOpenQr={(url) => void openExternalUrl(url)}
+              onCopyQr={(url) => void copyText(url, t("微信登录链接已复制。"))}
+            />
+          ) : null}
           {route === "enhance" ? (
             <EnhanceScreen
+              dirty={settingsDirty}
               form={settingsForm}
               pluginMarketplaceProgress={pluginMarketplaceProgress}
               remotePluginMarketplace={remotePluginMarketplace}
@@ -2941,7 +3182,14 @@ export function App() {
             />
           ) : null}
           {route === "settings" ? (
-            <SettingsScreen settings={settings} theme={theme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} />
+            <SettingsScreen
+              dirty={settingsDirty}
+              settings={settings}
+              theme={theme}
+              form={settingsForm}
+              onFormChange={setSettingsForm}
+              actions={actions}
+            />
           ) : null}
         </section>
       </main>
@@ -3086,6 +3334,7 @@ type Actions = {
   applyRelayInjection: () => Promise<boolean>;
   applyPureApiInjection: () => Promise<boolean>;
   clearRelayInjection: () => Promise<boolean>;
+  saveRelayFile: (kind: "config" | "auth", contents: string, silent?: boolean) => Promise<void>;
   upsertContextEntry: (
     settings: BackendSettings,
     kind: ContextKind,
@@ -3099,7 +3348,7 @@ type Actions = {
   testStepwiseSettings: (settings: BackendSettings) => Promise<void>;
   fetchRelayProfileModels: (profile: RelayProfile) => Promise<string[] | null>;
   fetchSub2ApiBilling: (profile: RelayProfile) => Promise<Sub2ApiBillingResult | null>;
-  switchRelayProfile: (settings: BackendSettings, previousActiveRelayId?: string) => Promise<boolean>;
+  switchRelayProfile: (settings: BackendSettings, previousActiveRelayId?: string) => Promise<void>;
   relaySwitching: boolean;
   switchOfficialMode: () => Promise<void>;
   switchPureApiMode: () => Promise<void>;
@@ -3117,6 +3366,443 @@ type Actions = {
   toggleTheme: () => void;
   checkHealth: () => Promise<void>;
 };
+
+function SearchablePathPicker({
+  value,
+  options,
+  placeholder,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const filteredOptions = useMemo(() => {
+    const query = value.trim().toLowerCase();
+    return options.filter((option) => !query || option.toLowerCase().includes(query)).slice(0, 30);
+  }, [options, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  return (
+    <div className="weixin-search-picker" ref={rootRef}>
+      <div className="weixin-search-input-wrap">
+        <Search className="weixin-search-input-icon h-4 w-4" />
+        <Input
+          aria-expanded={open}
+          aria-label={placeholder}
+          className="h-10"
+          onChange={(event) => {
+            onChange(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+          }}
+          placeholder={placeholder}
+          value={value}
+        />
+        <ChevronDown className={`weixin-search-input-chevron h-4 w-4${open ? " is-open" : ""}`} />
+      </div>
+      {open ? (
+        <div className="weixin-search-menu" role="listbox">
+          {filteredOptions.length ? filteredOptions.map((option) => (
+            <button
+              className="weixin-search-option"
+              key={option}
+              onClick={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <span>{option}</span>
+            </button>
+          )) : (
+            <div className="weixin-search-empty">{t("没有匹配的已有目录，可继续直接输入。")}</div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SearchableSessionPicker({
+  sessions,
+  selectedId,
+  onSelect,
+}: {
+  sessions: LocalSession[];
+  selectedId: string;
+  onSelect: (session: LocalSession | null) => void;
+}) {
+  const selected = sessions.find((session) => session.id === selectedId) ?? null;
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const filteredSessions = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return sessions
+      .filter((session) => !normalized || [session.title, session.cwd, session.id, session.modelProvider].some((value) => value.toLowerCase().includes(normalized)))
+      .slice(0, 30);
+  }, [query, sessions]);
+
+  useEffect(() => {
+    if (selected) setQuery(selected.title || selected.id);
+  }, [selected]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  return (
+    <div className="weixin-search-picker" ref={rootRef}>
+      <div className="weixin-search-input-wrap">
+        <Search className="weixin-search-input-icon h-4 w-4" />
+        <Input
+          aria-expanded={open}
+          aria-label={t("已有会话")}
+          className="h-10"
+          onChange={(event) => {
+            setQuery(event.target.value);
+            if (selectedId) onSelect(null);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+          }}
+          placeholder={sessions.length ? t("搜索已有会话") : t("暂无可用的本地会话")}
+          value={query}
+        />
+        <ChevronDown className={`weixin-search-input-chevron h-4 w-4${open ? " is-open" : ""}`} />
+      </div>
+      {open ? (
+        <div className="weixin-search-menu weixin-session-menu" role="listbox">
+          {filteredSessions.length ? filteredSessions.map((session) => (
+            <button
+              aria-selected={session.id === selectedId}
+              className="weixin-search-option weixin-session-option"
+              key={session.id}
+              onClick={() => {
+                onSelect(session);
+                setQuery(session.title || session.id);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <strong>{session.title || t("未命名会话")}</strong>
+              <span>{session.cwd || t("未记录项目路径")}</span>
+              <small>{formatTime(session.updatedAtMs ?? 0)} · {session.modelProvider || t("provider 未记录")}</small>
+            </button>
+          )) : (
+            <div className="weixin-search-empty">{t("没有匹配的本地会话。")}</div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WeixinConnectScreen({
+  form,
+  status,
+  qr,
+  sessions,
+  onFormChange,
+  onSave,
+  onQrLogin,
+  onStart,
+  onStop,
+  onChooseWorkDir,
+  onChooseCodexPath,
+  onOpenQr,
+  onCopyQr,
+}: {
+  form: BackendSettings;
+  status: WeixinConnectStatusResult | null;
+  qr: WeixinQrResult | null;
+  sessions: LocalSession[];
+  onFormChange: (value: BackendSettings) => void;
+  onSave: () => void;
+  onQrLogin: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  onChooseWorkDir: () => void;
+  onChooseCodexPath: () => void;
+  onOpenQr: (url: string) => void;
+  onCopyQr: (url: string) => void;
+}) {
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const workDirOptions = useMemo(
+    () => Array.from(new Set(sessions.map((session) => session.cwd.trim()).filter(Boolean))).sort(),
+    [sessions],
+  );
+  const runtimeState = status?.state ?? "stopped";
+  const running = ["starting", "running", "retrying"].includes(runtimeState);
+  const stopping = runtimeState === "stopping";
+  const statusLabel = {
+    starting: t("正在启动"),
+    running: t("运行中"),
+    retrying: t("正在重试"),
+    stopping: t("正在停止"),
+    error: t("异常"),
+    stopped: t("已停止"),
+  }[runtimeState] ?? runtimeState;
+
+  return (
+    <div className="weixin-connect-page">
+      <Panel className={`weixin-status-panel is-${runtimeState}`}>
+        <CardContent className="weixin-status-content">
+          <div className="weixin-connect-head">
+            <div className="weixin-status-primary">
+              <div className="weixin-status-icon" aria-hidden="true">
+                <MessageCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="section-heading-row">
+                  <h2>{t("个人微信连接")}</h2>
+                  <UiBadge variant={runtimeState === "running" ? "default" : runtimeState === "error" ? "outline" : "secondary"}>
+                    {statusLabel}
+                  </UiBadge>
+                </div>
+                <p className="muted">{status?.message ?? t("微信连接未启动。")}</p>
+              </div>
+            </div>
+            <div className="toolbar weixin-connect-actions">
+              <Button onClick={onSave} variant="outline">
+                <Save className="h-4 w-4" />
+                {t("保存")}
+              </Button>
+              <Button onClick={onQrLogin} variant="outline">
+                <ScanLine className="h-4 w-4" />
+                {form.weixinConnectToken ? t("重新登录") : t("扫码登录")}
+              </Button>
+              {running || stopping ? (
+                <Button disabled={stopping} onClick={onStop} variant="outline">
+                  <PowerOff className="h-4 w-4" />
+                  {stopping ? t("正在停止") : t("停止")}
+                </Button>
+              ) : (
+                <Button disabled={!form.weixinConnectToken} onClick={onStart}>
+                  <Play className="h-4 w-4" />
+                  {t("启动")}
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="weixin-runtime-meta">
+            <div>
+              <span>{t("账号")}</span>
+              <code title={status?.accountId || form.weixinConnectAccountId || t("未登录")}>
+                {status?.accountId || form.weixinConnectAccountId || t("未登录")}
+              </code>
+            </div>
+            <div>
+              <span>{t("已处理消息")}</span>
+              <strong>{status?.processedMessages ?? 0}</strong>
+            </div>
+            <div>
+              <span>{t("最近联系人")}</span>
+              <code title={status?.lastPeerId || t("暂无")}>{status?.lastPeerId || t("暂无")}</code>
+            </div>
+          </div>
+        </CardContent>
+      </Panel>
+
+      {qr?.qrContent ? (
+        <Panel>
+          <CardHeader>
+            <CardTitle>{qr.qrStatus === "scaned" ? t("已扫码，请在手机上确认") : t("微信扫码登录")}</CardTitle>
+            <CardDescription>{t("在手机微信中打开登录链接，或复制到可生成二维码的设备完成确认。")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {qr.qrSvg ? (
+              <div className="weixin-qr-image" dangerouslySetInnerHTML={{ __html: qr.qrSvg }} />
+            ) : null}
+            <div className="weixin-qr-content">{qr.qrContent}</div>
+            <div className="toolbar">
+              <Button onClick={() => onOpenQr(qr.qrContent)}>
+                <ExternalLink className="h-4 w-4" />
+                {t("打开登录链接")}
+              </Button>
+              <Button onClick={() => onCopyQr(qr.qrContent)} variant="outline">
+                <Copy className="h-4 w-4" />
+                {t("复制链接")}
+              </Button>
+            </div>
+          </CardContent>
+        </Panel>
+      ) : null}
+
+      <Panel className="weixin-settings-panel">
+        <CardHeader className="weixin-settings-head">
+          <div>
+            <CardTitle>{t("连接设置")}</CardTitle>
+            <CardDescription>{t("每个微信联系人会映射到独立的 Codex 会话。")}</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="weixin-connect-form">
+          <section className="weixin-form-section">
+            <div className="weixin-form-section-title">
+              <KeyRound className="h-4 w-4" />
+              <strong>{t("账号")}</strong>
+            </div>
+            <div className="weixin-form-fields">
+              <label className="field">
+                <span>{t("iLink API 地址")}</span>
+                <Input
+                  className="h-10"
+                  onChange={(event) => onFormChange({ ...form, weixinConnectBaseUrl: event.target.value })}
+                  value={form.weixinConnectBaseUrl}
+                />
+              </label>
+              <label className="field">
+                <span>{t("登录凭据")}</span>
+                <Input
+                  autoComplete="off"
+                  className="h-10"
+                  onChange={(event) => onFormChange({ ...form, weixinConnectToken: event.target.value })}
+                  placeholder={t("扫码后自动保存，也可粘贴已有 Bearer token")}
+                  type="password"
+                  value={form.weixinConnectToken}
+                />
+              </label>
+              <label className="field">
+                <span>{t("允许的微信用户 ID")}</span>
+                <Input
+                  className="h-10"
+                  onChange={(event) => onFormChange({ ...form, weixinConnectAllowFrom: event.target.value })}
+                  placeholder="user@im.wechat"
+                  value={form.weixinConnectAllowFrom}
+                />
+              </label>
+              <label className="field">
+                <span>{t("账号标识")}</span>
+                <Input
+                  className="h-10"
+                  onChange={(event) => onFormChange({ ...form, weixinConnectAccountId: event.target.value })}
+                  placeholder={t("扫码后自动填写")}
+                  value={form.weixinConnectAccountId}
+                />
+              </label>
+              <label className="field">
+                <span>{t("SKRouteTag")}</span>
+                <Input
+                  className="h-10"
+                  onChange={(event) => onFormChange({ ...form, weixinConnectRouteTag: event.target.value })}
+                  placeholder={t("仅在网关要求时填写")}
+                  value={form.weixinConnectRouteTag}
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="weixin-form-section">
+            <div className="weixin-form-section-title">
+              <MessageCircle className="h-4 w-4" />
+              <strong>{t("会话管理")}</strong>
+            </div>
+            <div className="weixin-form-fields">
+              <label className="field">
+                <span>{t("工作目录")}</span>
+                <div className="weixin-path-row">
+                  <SearchablePathPicker
+                    onChange={(value) => {
+                      setSelectedSessionId("");
+                      onFormChange({ ...form, weixinConnectWorkDir: value });
+                    }}
+                    options={workDirOptions}
+                    placeholder={t("搜索或输入工作目录")}
+                    value={form.weixinConnectWorkDir}
+                  />
+                  <Button onClick={onChooseWorkDir} size="icon" title={t("选择工作目录")} type="button" variant="outline">
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
+                </div>
+              </label>
+              <label className="field">
+                <span>{t("已有会话")}</span>
+                <SearchableSessionPicker
+                  onSelect={(session) => {
+                    setSelectedSessionId(session?.id ?? "");
+                    if (session?.cwd) onFormChange({ ...form, weixinConnectWorkDir: session.cwd });
+                  }}
+                  selectedId={selectedSessionId}
+                  sessions={sessions}
+                />
+                <small className="weixin-field-hint">{t("选择后自动带入该会话的工作目录，微信联系人仍保持独立会话。")}</small>
+              </label>
+              <label className="field">
+                <span>{t("模型")}</span>
+                <Input
+                  className="h-10"
+                  onChange={(event) => onFormChange({ ...form, weixinConnectModel: event.target.value })}
+                  placeholder={t("留空时使用 Codex 当前默认模型")}
+                  value={form.weixinConnectModel}
+                />
+              </label>
+              <label className="field">
+                <span>{t("沙箱权限")}</span>
+                <select
+                  className="field-select"
+                  onChange={(event) => onFormChange({
+                    ...form,
+                    weixinConnectSandbox: event.target.value as BackendSettings["weixinConnectSandbox"],
+                  })}
+                  value={form.weixinConnectSandbox}
+                >
+                  <option value="read-only">{t("只读")}</option>
+                  <option value="workspace-write">{t("允许修改工作目录")}</option>
+                  <option value="danger-full-access">{t("完全访问")}</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section className="weixin-form-section">
+            <div className="weixin-form-section-title">
+              <Settings className="h-4 w-4" />
+              <strong>Codex CLI</strong>
+            </div>
+            <div className="weixin-form-fields">
+              <label className="field">
+                <span>{t("Codex CLI 路径")}</span>
+                <div className="weixin-path-row">
+                  <Input
+                    className="h-10"
+                    onChange={(event) => onFormChange({ ...form, weixinConnectCodexPath: event.target.value })}
+                    placeholder={t("留空时从 PATH 查找 codex")}
+                    value={form.weixinConnectCodexPath}
+                  />
+                  <Button onClick={onChooseCodexPath} size="icon" title={t("选择 Codex CLI")} type="button" variant="outline">
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
+                </div>
+              </label>
+            </div>
+          </section>
+        </CardContent>
+      </Panel>
+    </div>
+  );
+}
 
 function OverviewScreen({
   overview,
@@ -3474,6 +4160,7 @@ function envConflictSourceLabel(source: string): string {
 }
 
 function EnhanceScreen({
+  dirty,
   form,
   pluginMarketplaceProgress,
   remotePluginMarketplace,
@@ -3481,6 +4168,7 @@ function EnhanceScreen({
   onFormChange,
   actions,
 }: {
+  dirty: boolean;
   form: BackendSettings;
   pluginMarketplaceProgress: TaskProgress;
   remotePluginMarketplace: RemotePluginMarketplaceResult | null;
@@ -3510,39 +4198,41 @@ function EnhanceScreen({
   return (
     <>
       <Panel className="enhance-panel">
-        <CardHead title={t("Codex增强")} detail={t("会话删除、导出、项目移动和用户脚本等界面能力")} />
-        <CardContent>
-          <label className="switch-row">
-            <input
-              checked={form.enhancementsEnabled}
-              onChange={(event) => onFormChange({ ...form, enhancementsEnabled: event.currentTarget.checked })}
-              type="checkbox"
-            />
-            <span>
-              <strong>{t("启用 Codex增强")}</strong>
-              <small>{t("关闭后会停用删除、导出、项目移动、插件相关和菜单位置增强。")}</small>
-            </span>
-            <ToggleVisual />
-          </label>
-          <label className="switch-row">
-            <input
-              checked={form.computerUseGuardEnabled}
-              onChange={(event) => onFormChange({ ...form, computerUseGuardEnabled: event.currentTarget.checked })}
-              type="checkbox"
-            />
-            <span>
-              <strong>{t("启用 Windows Computer Use Guard")}</strong>
-              <small>{t("默认关闭；开启后启动 Codex 时会自动保留官方 Computer Use 插件所需的 config.toml、bundled 插件和 notify 配置。")}</small>
-            </span>
-            <ToggleVisual />
-          </label>
-          <ModeSelector launchMode={form.launchMode} actions={actions} />
-          {form.launchMode === "relay" ? (
-            <div className="hint-line">
-              <ShieldCheck className="h-4 w-4" />
-              <span>{t("当前为兼容增强模式，插件市场解锁不会启用；其他页面功能仍可用。")}</span>
-            </div>
-          ) : null}
+        <CardHead title={t("Codex增强")} detail={t("会话删除、导出和用户脚本等界面能力")} />
+        <CardContent className="enhance-content">
+          <div className="enhance-control-deck">
+            <section className="enhance-control-section">
+              <div className="enhance-control-heading">
+                <strong>{t("基础设置")}</strong>
+              </div>
+              <div className="enhance-control-list">
+                <label className="switch-row compact">
+                  <input
+                    checked={form.enhancementsEnabled}
+                    onChange={(event) => onFormChange({ ...form, enhancementsEnabled: event.currentTarget.checked })}
+                    type="checkbox"
+                  />
+                  <span>
+                    <strong>{t("启用 Codex增强")}</strong>
+                    <small>{t("关闭后会停用删除、导出、插件相关和菜单位置增强。")}</small>
+                  </span>
+                  <ToggleVisual />
+                </label>
+              </div>
+            </section>
+            <section className="enhance-control-section enhance-mode-section">
+              <div className="enhance-control-heading">
+                <strong>{t("Codex增强模式")}</strong>
+              </div>
+              <ModeSelector launchMode={form.launchMode} actions={actions} />
+              {form.launchMode === "relay" ? (
+                <div className="hint-line enhance-mode-hint">
+                  <ShieldCheck className="h-4 w-4" />
+                  <span>{t("当前为兼容增强模式，插件市场解锁不会启用；其他页面功能仍可用。")}</span>
+                </div>
+              ) : null}
+            </section>
+          </div>
           <div className="enhance-feature-groups">
             <FeatureGroup title={t("插件与模型")} detail={t("管理插件市场、模型列表和服务档位相关增强。")}>
               <FeatureToggle title={t("插件市场解锁")} detail={t("API Key 模式下扩展插件市场请求，尽量显示完整插件列表；官方/混合模式通常不需要。")} checked={form.codexAppPluginMarketplaceUnlock} disabled={!masterEnabled || !patchMode} onChange={(value) => setEnhanceFlag("codexAppPluginMarketplaceUnlock", value)} />
@@ -3576,7 +4266,6 @@ function EnhanceScreen({
               <FeatureToggle title={t("会话删除")} detail={t("在会话列表悬停显示删除按钮，并支持撤销。")} checked={form.codexAppSessionDelete} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppSessionDelete", value)} />
               <FeatureToggle title={t("Markdown 导出")} detail={t("在会话列表显示导出按钮，导出带时间戳的 Markdown。")} checked={form.codexAppMarkdownExport} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppMarkdownExport", value)} />
               <FeatureToggle title={t("粘贴修复")} detail={t("从 Word 等富文本粘贴到 Codex composer 时只保留纯文本，避免被识别为图片/文件附件。需重启 Codex 才生效。")} checked={form.codexAppPasteFix} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppPasteFix", value)} />
-              <FeatureToggle title={t("会话项目移动")} detail={t("把会话移动到普通对话或其他本地项目。")} checked={form.codexAppProjectMove} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppProjectMove", value)} />
               <FeatureToggle title={t("会话 ID 标识")} detail={t("在侧边栏会话标题前显示短 ID 和 UUIDv7 创建时间，方便定位历史会话。")} checked={form.codexAppThreadIdBadge} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppThreadIdBadge", value)} />
               <FeatureToggle title={t("对话居中宽度")} detail={t("把主对话和输入框限制到固定最大宽度，适合大屏阅读。")} checked={form.codexAppConversationView} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppConversationView", value)} />
               <FeatureToggle title={t("切换对话保留位置")} detail={t("切换 thread 时恢复上一次浏览位置。")} checked={form.codexAppThreadScrollRestore} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppThreadScrollRestore", value)} />
@@ -3597,39 +4286,47 @@ function EnhanceScreen({
               <FeatureToggle title={t("Zed 项目记录")} detail={t("维护 Codex++ 自己的远程项目最近列表。")} checked={form.zedRemoteProjectRegistryEnabled} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("zedRemoteProjectRegistryEnabled", value)} />
               <FeatureToggle title={t("同步 Zed settings")} detail={t("高级选项，默认关闭；当前实现不主动改写 Zed settings。")} checked={form.zedRemoteSyncToZedSettings} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("zedRemoteSyncToZedSettings", value)} />
               <FeatureToggle title="Upstream worktree" detail={t("从最新 upstream 分支创建 Git worktree。")} checked={form.codexAppUpstreamWorktreeCreate} disabled={!masterEnabled} onChange={(value) => setEnhanceFlag("codexAppUpstreamWorktreeCreate", value)} />
+              <div className="feature-select-row">
+                <Field label={t("Zed 默认打开策略")}>
+                  <AppSelect
+                    disabled={!masterEnabled}
+                    onChange={(value) => onFormChange({ ...form, zedRemoteOpenStrategy: value })}
+                    options={[
+                      { value: "addToFocusedWorkspace", label: t("加入当前工作区") },
+                      { value: "reuseWindow", label: t("复用窗口") },
+                      { value: "newWindow", label: t("新窗口") },
+                      { value: "default", label: t("Zed 默认行为") },
+                    ]}
+                    value={form.zedRemoteOpenStrategy}
+                  />
+                </Field>
+              </div>
             </FeatureGroup>
           </div>
-          <div className="hint-line">
-            <Wrench className="h-4 w-4" />
-            <span>{t("新机器没有本地插件市场时，可从 openai/plugins 初始化到当前 CODEX_HOME。")}</span>
+          <div className="enhance-utility-row">
+            <div>
+              <Wrench className="h-4 w-4" />
+              <span>{t("新机器没有本地插件市场时，可从 openai/plugins 初始化到当前 CODEX_HOME。")}</span>
+            </div>
             <Button disabled={pluginMarketplaceProgress.active} variant="secondary" onClick={() => void actions.repairPluginMarketplace()}>
               {pluginMarketplaceProgress.active ? t("正在修复…") : t("修复插件市场")}
             </Button>
           </div>
           <TaskProgressBox progress={pluginMarketplaceProgress} title={t("插件市场修复进度")} />
           <TaskProgressBox progress={remotePluginMarketplaceProgress} title={t("官方远端插件缓存进度")} />
-          <div className="zed-remote-settings">
-            <Field label={t("Zed 默认打开策略")}>
-              <AppSelect
-                disabled={!masterEnabled}
-                onChange={(value) => onFormChange({ ...form, zedRemoteOpenStrategy: value })}
-                options={[
-                  { value: "addToFocusedWorkspace", label: t("加入当前工作区") },
-                  { value: "reuseWindow", label: t("复用窗口") },
-                  { value: "newWindow", label: t("新窗口") },
-                  { value: "default", label: t("Zed 默认行为") },
-                ]}
-                value={form.zedRemoteOpenStrategy}
-              />
-            </Field>
-          </div>
-          <div className="hint-line">
+          <div className="hint-line enhance-footer-hint">
             <Info className="h-4 w-4" />
             <span>{t("如果使用官方模式或官方混入 API 模式，通常不需要开启插件市场解锁。")}</span>
           </div>
-          <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存增强设置")}</Button>
-          </Toolbar>
+          {dirty ? (
+            <div className="enhance-save-bar">
+              <span>{t("Codex增强")}</span>
+              <Button onClick={() => void actions.saveSettings()}>
+                <Save className="h-4 w-4" />
+                {t("保存增强设置")}
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Panel>
     </>
@@ -4926,17 +5623,30 @@ function SessionsScreen({
 
   return (
     <>
-      <Panel>
+      <Panel className="sessions-overview-panel">
         <CardHead title={t("会话管理")} detail={t("读取 Codex 本地 SQLite 会话库，会删除数据库记录和对应 rollout 文件")} />
-        <CardContent>
-          <div className="metric-list">
-            <Metric label={t("当前页会话")} value={tf("{0} 个", [items.length])} />
-            <Metric label={t("当前页未归档")} value={tf("{0} 个", [activeCount])} />
-            <Metric label={t("当前页已归档")} value={tf("{0} 个", [archivedCount])} />
-            <Metric label={t("数据库")} value={sessions?.dbPath ?? "~/.codex/sqlite/*.db"} />
+        <CardContent className="sessions-overview-content">
+          <div className="session-summary-bar">
+            <div>
+              <span>{t("当前页会话")}</span>
+              <strong>{tf("{0} 个", [items.length])}</strong>
+            </div>
+            <div>
+              <span>{t("当前页未归档")}</span>
+              <strong>{tf("{0} 个", [activeCount])}</strong>
+            </div>
+            <div>
+              <span>{t("当前页已归档")}</span>
+              <strong>{tf("{0} 个", [archivedCount])}</strong>
+            </div>
+            <div className="session-summary-path">
+              <span>{t("数据库")}</span>
+              <code>{sessions?.dbPath ?? "~/.codex/sqlite/*.db"}</code>
+            </div>
           </div>
-          <div className="form-row">
-            <Field label={t("同步目标")}>
+
+          <div className="session-repair-tools">
+            <Field className="session-sync-target" label={t("同步目标")}>
               <AppSelect
                 disabled={providerSyncProgress.active || !(providerSyncTargets?.targets ?? []).length}
                 value={selectedProviderSyncTarget}
@@ -4951,60 +5661,67 @@ function SessionsScreen({
                 }
               />
             </Field>
-          </div>
-          <Toolbar>
-            <Button onClick={() => void actions.refreshLocalSessions()}>
-              <RefreshCw className="h-4 w-4" />
-              {t("刷新会话")}
-            </Button>
-            <Button disabled={providerSyncProgress.active} onClick={() => void actions.syncProvidersNow()} variant="outline">
-              <RefreshCw className="h-4 w-4" />
-              {providerSyncProgress.active ? t("正在修复…") : t("立刻修复历史会话")}
-            </Button>
-          </Toolbar>
-          <div className="provider-sync-progress" data-active={providerSyncProgress.active}>
-            <div className="provider-sync-progress-head">
-              <strong>{providerSyncProgress.active ? t("正在修复历史会话") : t("历史会话修复进度")}</strong>
-              <span>{providerSyncProgress.percent}%</span>
+
+            <label className="switch-row compact session-auto-repair">
+              <input
+                checked={form.providerSyncEnabled}
+                onChange={(event) => onFormChange({ ...form, providerSyncEnabled: event.currentTarget.checked })}
+                type="checkbox"
+              />
+              <span>
+                <strong>{t("启动前自动修复历史会话")}</strong>
+                <small>{t("启动 Codex 前整理旧对话的归属标记。")}</small>
+              </span>
+              <ToggleVisual />
+            </label>
+
+            <div className="session-repair-actions">
+              <Button onClick={() => void actions.refreshLocalSessions()} variant="outline">
+                <RefreshCw className="h-4 w-4" />
+                {t("刷新会话")}
+              </Button>
+              <Button disabled={providerSyncProgress.active} onClick={() => void actions.syncProvidersNow()} variant="outline">
+                <Wrench className="h-4 w-4" />
+                {providerSyncProgress.active ? t("正在修复…") : t("修复历史会话")}
+              </Button>
+              <Button onClick={() => void actions.saveSettings()}>
+                <Save className="h-4 w-4" />
+                {t("保存设置")}
+              </Button>
             </div>
-            <div
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={providerSyncProgress.percent}
-              className="provider-sync-progress-bar"
-              role="progressbar"
-            >
-              <div className="provider-sync-progress-fill" style={{ width: `${providerSyncProgress.percent}%` }} />
-            </div>
-            <small>{providerSyncProgress.message}</small>
           </div>
-          <div className="hint-line">
+
+          {providerSyncProgress.active || providerSyncProgress.percent > 0 ? (
+            <div className="provider-sync-progress session-repair-progress" data-active={providerSyncProgress.active}>
+              <div className="provider-sync-progress-head">
+                <strong>{providerSyncProgress.active ? t("正在修复历史会话") : t("历史会话修复进度")}</strong>
+                <span>{providerSyncProgress.percent}%</span>
+              </div>
+              <div
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={providerSyncProgress.percent}
+                className="provider-sync-progress-bar"
+                role="progressbar"
+              >
+                <div className="provider-sync-progress-fill" style={{ width: `${providerSyncProgress.percent}%` }} />
+              </div>
+              <small>{providerSyncProgress.message}</small>
+            </div>
+          ) : null}
+
+          <div className="hint-line session-delete-hint">
             <Info className="h-4 w-4" />
             <span>{t("删除会创建本地备份；如果 Codex App 正在使用该会话，建议先关闭对应会话窗口再操作。")}</span>
           </div>
-          <label className="switch-row">
-            <input
-              checked={form.providerSyncEnabled}
-              onChange={(event) => onFormChange({ ...form, providerSyncEnabled: event.currentTarget.checked })}
-              type="checkbox"
-            />
-            <span>
-              <strong>{t("启动前自动修复历史会话")}</strong>
-              <small>{t("开启后，通过 Codex++ 启动 Codex 前自动整理一次旧对话的归属标记。")}</small>
-            </span>
-            <ToggleVisual />
-          </label>
-          <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存自动修复设置")}</Button>
-          </Toolbar>
         </CardContent>
       </Panel>
-      <Panel>
+      <Panel className="sessions-list-panel">
         <CardHead
           title={t("本地会话")}
           detail={sessions ? tf("第 {0} 页，每页最多 {1} 条，按更新时间倒序显示", [currentPage, pageSize]) : t("点击刷新会话读取本地数据库")}
         />
-        <CardContent>
+        <CardContent className="session-list-content">
           {items.length ? (
             <>
               <div className="session-list-toolbar">
@@ -5278,12 +5995,14 @@ function AboutScreen({
 }
 
 function SettingsScreen({
+  dirty,
   settings,
   theme,
   form,
   onFormChange,
   actions,
 }: {
+  dirty: boolean;
   settings: SettingsResult | null;
   theme: Theme;
   form: BackendSettings;
@@ -5291,10 +6010,10 @@ function SettingsScreen({
   actions: Actions;
 }) {
   return (
-    <>
+    <div className="settings-page">
       <Panel>
         <CardHead title={t("基础设置")} detail={settings?.settings_path ?? ""} />
-        <CardContent>
+        <CardContent className="settings-content">
           <div className="theme-row">
             <div>
               <strong>{t("界面主题")}</strong>
@@ -5391,7 +6110,6 @@ function SettingsScreen({
             </details>
             <div className="toolbar stepwise-settings-actions">
               <Button variant="secondary" onClick={() => void actions.testStepwiseSettings(form)}>{t("测试连接")}</Button>
-              <Button onClick={() => void actions.saveSettings()}>{t("保存设置")}</Button>
             </div>
           </div>
           <div className="settings-block">
@@ -5453,7 +6171,6 @@ function SettingsScreen({
             </Field>
           </div>
           <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存设置")}</Button>
             <Button variant="secondary" onClick={() => void actions.resetImageOverlaySettings()}>
               {t("重置背景")}
             </Button>
@@ -5462,7 +6179,7 @@ function SettingsScreen({
       </Panel>
       <Panel>
         <CardHead title={t("Codex 启动参数")} detail={t("启动 Codex App 时追加到默认 CDP 参数后。留空则保持默认启动行为。")} />
-        <CardContent>
+        <CardContent className="settings-content">
           <Field label={t("额外参数")}>
             <Textarea
               className="launch-args-input"
@@ -5478,12 +6195,18 @@ function SettingsScreen({
             />
           </Field>
           <p className="field-hint">{t("每行一个参数，例如 --force_high_performance_gpu。不需要填写 open 或 --args。")}</p>
-          <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>{t("保存设置")}</Button>
-          </Toolbar>
         </CardContent>
       </Panel>
-    </>
+      {dirty ? (
+        <div className="settings-save-bar">
+          <span>{t("设置有修改时，保存后才会写入本地配置。")}</span>
+          <Button onClick={() => void actions.saveSettings()}>
+            <Save className="h-4 w-4" />
+            {t("保存设置")}
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -5836,12 +6559,6 @@ function RelayProfileDetail({
       : updateRelayProfile(form, profile.id, normalizedDraft));
     const settingsValidationError = relayModelRoutesSettingsValidation(next);
     if (settingsValidationError) return;
-    if (isActive && relayProfileUsesLiveFiles(normalizedDraft)) {
-      // Active live files must be updated through the guarded profile transaction.
-      if (!await actions.switchRelayProfile(next, "")) return;
-      onSaved?.();
-      return;
-    }
     const activeLiveBaseUrl = codexBaseUrlFromConfig(
       relayFiles?.configContents ?? profile.configContents,
     );
@@ -5863,6 +6580,14 @@ function RelayProfileDetail({
     }
     const savedProfile = savedSettings.relayProfiles.find((candidate) => candidate.id === normalizedDraft.id)
       ?? normalizedDraft;
+    if (isActive && savedSettings.relayProfilesEnabled && relayProfileUsesLiveFiles(savedProfile)) {
+      await actions.saveRelayFile(
+        "config",
+        effectiveRelayConfigPreview(savedProfile, savedSettings, savedProfile),
+        true,
+      );
+      await actions.saveRelayFile("auth", savedProfile.authContents, true);
+    }
     onSaved?.();
   };
   const switchDraft = () => {
@@ -7047,7 +7772,7 @@ function ModeSelector({ launchMode, actions }: { launchMode: LaunchMode; actions
         type="button"
       >
         <strong>{t("兼容增强")}</strong>
-        <span>{t("适合官方登录或官方混入 API Key；保留会话删除、导出、项目移动和用户脚本，关闭插件市场相关增强。")}</span>
+        <span>{t("适合官方登录或官方混入 API Key；保留会话删除、导出和用户脚本，关闭插件市场相关增强。")}</span>
       </button>
       <button
         className={`mode-option ${launchMode === "patch" ? "active" : ""}`}
@@ -7055,7 +7780,7 @@ function ModeSelector({ launchMode, actions }: { launchMode: LaunchMode; actions
         type="button"
       >
         <strong>{t("完整增强")}</strong>
-        <span>{t("适合纯 API；启用插件市场、会话删除导出、项目移动等全部页面能力。")}</span>
+        <span>{t("适合纯 API；启用插件市场、会话删除导出等全部页面能力。")}</span>
       </button>
     </div>
   );
@@ -7588,7 +8313,8 @@ function routeSubtitle(route: Route) {
     relayEnvironment: t("排查可能干扰中转站配置的本机环境"),
     sessions: t("查看、删除和修复 Codex 本地会话"),
     context: t("独立管理 MCP、Skills、Plugins"),
-    enhance: t("会话删除、导出、项目移动和脚本能力"),
+    weixin: t("通过个人微信连接本机 Codex 会话"),
+    enhance: t("会话删除、导出和脚本能力"),
     dreamSkin: t("Codex-Dream-Skin 风格主题和换图"),
     zedRemote: t("管理 Codex SSH 项目并加入 Zed workspace"),
     userScripts: t("内置和用户自定义脚本清单"),
@@ -8195,6 +8921,8 @@ function statusLabel(status: string) {
     installed: t("已安装"),
     ok: t("正常"),
     running: t("运行中"),
+    running_degraded: t("运行中（增强等待中）"),
+    starting: t("启动中"),
     failed: t("失败"),
     archived: t("已归档"),
     accepted: t("已受理"),
@@ -8207,7 +8935,7 @@ function statusLabel(status: string) {
 }
 
 function statusClass(status: string) {
-  if (["found", "installed", "ok", "running"].includes(status)) return "good";
+  if (["found", "installed", "ok", "running", "running_degraded"].includes(status)) return "good";
   if (["failed", "missing"].includes(status)) return "bad";
   return "warn";
 }
@@ -8302,7 +9030,6 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
     ...defaultSettings,
     ...settings,
     relayProfilesEnabled: settings.relayProfilesEnabled !== false,
-    computerUseGuardEnabled: settings.computerUseGuardEnabled === true,
     codexAppImageOverlayOpacity: clampNumber(settings.codexAppImageOverlayOpacity || 35, 1, 100),
     codexAppImageOverlayFitMode: normalizeImageOverlayFitMode(settings.codexAppImageOverlayFitMode),
     codexAppDreamSkinPaused: settings.codexAppDreamSkinPaused === true,
@@ -8317,6 +9044,10 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
     relayProfiles: profiles,
     activeRelayId,
   });
+}
+
+function backendSettingsEqual(left: BackendSettings, right: BackendSettings): boolean {
+  return JSON.stringify(normalizeSettings(left)) === JSON.stringify(normalizeSettings(right));
 }
 
 function clampNumber(value: number, min: number, max: number): number {
