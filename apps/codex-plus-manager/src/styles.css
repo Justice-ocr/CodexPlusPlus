@@ -4859,6 +4859,218 @@ select {
   flex-wrap: wrap;
 }
 
+/* Keep the supplier editor aligned with the current upstream component structure. */
+.relay-detail-sticky {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.relay-editor-heading,
+.relay-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.relay-editor-heading-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.relay-editor-heading-copy span {
+  overflow-wrap: anywhere;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.relay-editor-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.relay-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 14px;
+  align-items: start;
+}
+
+.relay-advanced-fields,
+.relay-api-fields {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.relay-advanced-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.relay-advanced-fields > .field,
+.relay-api-fields > .field {
+  grid-column: auto;
+}
+
+.provider-doctor {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 0;
+  border-block: 1px solid hsl(var(--border) / 0.78);
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 0;
+}
+
+.provider-doctor-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.provider-doctor-copy strong {
+  font-size: 14px;
+}
+
+.provider-doctor-copy span {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.relay-advanced-toggle,
+.relay-config-section,
+.relay-field-model-routes {
+  grid-column: 1 / -1;
+}
+
+.relay-advanced-toggle .btn {
+  width: fit-content;
+}
+
+.relay-config-section {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid hsl(var(--border) / 0.78);
+  padding-top: 16px;
+}
+
+.relay-config-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.relay-config-section-head > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.relay-config-section-head strong {
+  font-size: 15px;
+}
+
+.relay-config-section-head span {
+  max-width: 80ch;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.relay-model-list-tools {
+  justify-content: flex-end;
+}
+
+.relay-model-row {
+  grid-template-columns: minmax(220px, 1.6fr) minmax(130px, 0.7fr) minmax(180px, 1fr) 40px;
+  min-height: var(--relay-control-height);
+}
+
+.relay-model-row-head {
+  min-height: 24px;
+  padding-inline: 2px;
+}
+
+.relay-model-route-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.relay-model-route-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(170px, 1fr) 36px;
+  align-items: center;
+  gap: 8px;
+}
+
+.relay-model-route-head {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.relay-model-route-row input,
+.relay-model-row input {
+  min-width: 0;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.relay-vlm-section {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.relay-vlm-section-header,
+.relay-vlm-section > .field-hint,
+.relay-field-user-agent {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 860px) {
+  .relay-advanced-fields,
+  .relay-api-fields,
+  .relay-vlm-section {
+    grid-template-columns: 1fr;
+  }
+
+  .relay-config-section-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .relay-model-list-tools {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  .relay-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .relay-editor-actions {
+    justify-content: flex-start;
+  }
+
+  .relay-model-row,
+  .relay-model-route-row {
+    grid-template-columns: 1fr;
+  }
+
+  .relay-model-row-head,
+  .relay-model-route-head {
+    display: none;
+  }
+}
+
 .dream-skin-attribution-panel {
   border-color: hsl(var(--brand-accent) / 0.35);
 }

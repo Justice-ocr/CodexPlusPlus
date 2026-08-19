@@ -6,6 +6,7 @@ describe("relay profile saving", () => {
   it("persists settings and synchronizes active relay files", async () => {
     const app = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
     const commands = await readFile(new URL("../src-tauri/src/commands.rs", import.meta.url), "utf8");
+    const tauri = await readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
     const saveStart = app.indexOf("const saveDraft = async () =>");
     const saveEnd = app.indexOf("const switchDraft = () =>", saveStart);
     const saveDraft = app.slice(saveStart, saveEnd);
@@ -16,5 +17,6 @@ describe("relay profile saving", () => {
     assert.match(saveDraft, /actions\.saveRelayFile\(\s*[\"']config[\"']/);
     assert.match(saveDraft, /actions\.saveRelayFile\(\s*[\"']auth[\"']/);
     assert.match(commands, /pub fn save_relay_file\(/);
+    assert.match(tauri, /commands::save_relay_file,/);
   });
 });
