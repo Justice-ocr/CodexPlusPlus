@@ -45,8 +45,10 @@ test("model route inputs keep focus while editing and label the example placehol
   assert.doesNotMatch(source, /key=\{`\$\{route\.model\}-\$\{index\}`\}/);
   assert.match(source, /placeholder=\{t\("例：gpt-5\.6-luna"\)\}/);
   assert.match(source, /relayModelRoutesSettingsValidation\(validationSettings\)/);
-  assert.match(source, /await onFormChange\(next\)/);
-  assert.match(source, /actions\.saveRelayFile\(\s*[\"']config[\"']/);
+  assert.match(
+    source,
+    /if \(requiresRestart\) \{[\s\S]*?actions\.restart\(true\)[\s\S]*?return;[\s\S]*?actions\.switchRelayProfile\(savedSettings, savedSettings\.activeRelayId\)/,
+  );
 });
 
 test("saving a route target validates every reverse reference against the proposed settings", () => {

@@ -134,16 +134,15 @@ describe("dream skin theme helpers", () => {
       "utf8",
     );
 
-    assert.match(renderer, /const resolveShellMain = \(\) =>/);
-    assert.match(renderer, /main\[class\*="_MainContentSurface_"\]/);
-    assert.match(renderer, /shellMain\.setAttribute\(MAIN_SURFACE_MARKER, "true"\)/);
+    assert.match(renderer, /const ensureShellMain = \(\) =>/);
+    assert.match(renderer, /main\[class\*="MainContentSurface"\]/);
+    assert.match(renderer, /data-codex-plus-dream-surface/);
     assert.doesNotMatch(renderer, /!shellMain\s*\|\|\s*!shellSidebar/);
     assert.match(compatibility, /main\[class\*="_MainContentSurface_"\]/);
     assert.match(compatibility, /shellMain\.classList\.add\("main-surface"\)/);
     assert.match(compatibility, /data-codex-plus-dream-skin-main-surface/);
     assert.match(compatibility, /clearDreamSkinMainSurfaceCompatibility\(\)/);
-    assert.match(assets, /DREAM_SKIN_RENDERER_REVISION: &str = "20-main-surface-recovery"/);
-    assert.match(renderer, /\[role="main"\]:has\(\[data-testid="home-icon"\]\), \[role="main"\]\.home-main-content/);
+    assert.match(assets, /DREAM_SKIN_RENDERER_REVISION: &str = "20-modern-main-surface"/);
     assert.match(css, /:has\(> \.home-banners\)/);
     assert.match(css, /div:nth-child\(2\)/);
   });

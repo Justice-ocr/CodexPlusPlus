@@ -14,8 +14,7 @@ describe("relay profile saving", () => {
     assert.ok(saveStart >= 0);
     assert.ok(saveEnd > saveStart);
     assert.match(saveDraft, /await onFormChange\(next\)/);
-    assert.match(saveDraft, /actions\.saveRelayFile\(\s*[\"']config[\"']/);
-    assert.match(saveDraft, /actions\.saveRelayFile\(\s*[\"']auth[\"']/);
+    assert.match(saveDraft, /actions\.switchRelayProfile\(savedSettings, savedSettings\.activeRelayId\)/);
     assert.match(commands, /pub fn save_relay_file\(/);
     assert.match(tauri, /commands::save_relay_file,/);
   });

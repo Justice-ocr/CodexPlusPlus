@@ -27,14 +27,12 @@
     "--dream-accent",
     "--dream-accent-ink",
     "--dream-image-luma",
-    "--dream-font-family",
   ];
   const HOME_UTILITY_CLASS = "dream-home-utility";
   const AUX_PANEL_LAYER_CLASS = "dream-aux-panel-layer";
   const AUX_PANEL_RIGHT_CLASS = "dream-aux-panel-right";
   const AUX_PANEL_BOTTOM_CLASS = "dream-aux-panel-bottom";
   const AUX_PANEL_CLASSES = [AUX_PANEL_LAYER_CLASS, AUX_PANEL_RIGHT_CLASS, AUX_PANEL_BOTTOM_CLASS];
-  const MAIN_SURFACE_MARKER = "data-codex-plus-dream-skin-main-surface";
   const installToken = {};
   let samplingNativeShell = false;
   let observer = null;
@@ -67,12 +65,6 @@
     const requestedAccent = typeof config?.palette?.accent === "string"
       ? config.palette.accent.trim()
       : "";
-    const requestedFontFamily = typeof config.fontFamily === "string"
-      ? config.fontFamily.trim()
-      : "";
-    const safeFontFamily = /^[A-Za-z0-9 _-]{1,80}$/.test(requestedFontFamily)
-      ? requestedFontFamily
-      : null;
     const safeAccent = /^(?:#[\da-f]{3,8}|(?:rgb|hsl|oklch|oklab)\([^;{}]{1,96}\))$/i.test(requestedAccent)
       ? requestedAccent
       : null;
@@ -93,7 +85,6 @@
       focusX: hasNumber(art.focusX) ? clamp(art.focusX) : null,
       focusY: hasNumber(art.focusY) ? clamp(art.focusY) : null,
       accent: safeAccent,
-      fontFamily: safeFontFamily,
       initialAspect: Number.isFinite(metadataRatio) && metadataRatio > 0 ? metadataRatio : null,
     };
   };
@@ -298,6 +289,10 @@
     const root = document.documentElement;
     root?.classList.remove(...ROOT_CLASSES);
     for (const property of ROOT_PROPERTIES) root?.style.removeProperty(property);
+    document.querySelectorAll('main[data-codex-plus-dream-surface="true"]').forEach((node) => {
+      node.classList.remove("main-surface");
+      node.removeAttribute("data-codex-plus-dream-surface");
+    });
     document.querySelectorAll(".dream-home").forEach((node) => {
       node.classList.remove("dream-home");
       node.removeAttribute("data-dream-home-layout");
@@ -306,26 +301,18 @@
     document.querySelectorAll(".dream-home-shell").forEach((node) => node.classList.remove("dream-home-shell"));
     document.querySelectorAll(`.${HOME_UTILITY_CLASS}`).forEach((node) => node.classList.remove(HOME_UTILITY_CLASS));
     clearAuxiliaryPanelClasses();
-    document.querySelectorAll(`main[${MAIN_SURFACE_MARKER}="true"]`).forEach((node) => {
-      node.classList.remove("main-surface");
-      node.removeAttribute(MAIN_SURFACE_MARKER);
-    });
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(CHROME_ID)?.remove();
   };
 
-  const resolveShellMain = () => {
-    const marked = document.querySelector("main.main-surface");
-    if (marked) return marked;
-
-    // New Codex builds use a hashed main-surface class before the compatibility injector runs.
-    const modularSurface = document.querySelector('main[class*="_MainContentSurface_"]');
-    const candidates = modularSurface ? [] : [...document.querySelectorAll("main")];
-    const shellMain = modularSurface || (candidates.length === 1 ? candidates[0] : null);
-    if (!shellMain) return null;
-    shellMain.classList.add("main-surface");
-    shellMain.setAttribute(MAIN_SURFACE_MARKER, "true");
-    return shellMain;
+  const ensureShellMain = () => {
+    const classic = document.querySelector("main.main-surface");
+    if (classic) return classic;
+    const modern = document.querySelector('main[class*="MainContentSurface"], main[class*="_MainContentSurface_"]');
+    if (!modern) return null;
+    modern.classList.add("main-surface");
+    modern.setAttribute("data-codex-plus-dream-surface", "true");
+    return modern;
   };
 
   const applyProfile = (root) => {
@@ -360,8 +347,6 @@
     root.style.setProperty("--dream-accent", accent);
     root.style.setProperty("--dream-accent-ink", accentInk);
     root.style.setProperty("--dream-image-luma", profile.luma.toFixed(3));
-    if (config.fontFamily) root.style.setProperty("--dream-font-family", config.fontFamily);
-    else root.style.removeProperty("--dream-font-family");
   };
 
   const reconcileAuxiliaryPanels = (shellMain) => {
@@ -400,7 +385,7 @@
     const root = document.documentElement;
     if (!root || !document.body) return;
 
-    const shellMain = resolveShellMain();
+    const shellMain = ensureShellMain();
     if (!shellMain) {
       clearSkinDom();
       return;
@@ -420,15 +405,10 @@
       style.dataset.dreamVersion = "3";
     }
 
-    const homeCandidate = document.querySelector(
-      '[role="main"]:has([data-testid="home-icon"]), [role="main"].home-main-content',
-    );
+    const homeCandidate = document.querySelector('[role="main"]:has([data-testid="home-icon"])');
     const homeHasClassicChrome = !!(
       homeCandidate
-      && (
-        homeCandidate.classList.contains("home-main-content")
-        || homeCandidate.querySelector('[data-feature="game-source"]')
-      )
+      && homeCandidate.querySelector('[data-feature="game-source"]')
       && (
         homeCandidate.querySelector('.group\\/home-suggestions')
         || homeCandidate.querySelector('[class*="home-suggestions"]')
