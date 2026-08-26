@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "cargo build -p codex-plus-launcher --release --target x86_64-pc-windows-gnu && tauri build --target x86_64-pc-windows-gnu",
+    "build": "set \"PATH=%USERPROFILE%\\.cargo\\bin;%PATH%\" && cargo build -p codex-plus-launcher --release --target x86_64-pc-windows-gnu && tauri build --target x86_64-pc-windows-gnu",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "node --test \"src/*.test.ts\"",
     "vite:dev": "vite --host 127.0.0.1 --port 1420",
