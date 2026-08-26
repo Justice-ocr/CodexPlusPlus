@@ -1,14 +1,21 @@
 use anyhow::Context;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
-use crate::settings::{RelayContextSelection, RelayProfile, RelayProtocol};
+use crate::settings::{RelayProfile, RelayProtocol, RelaySessionProvider};
 
 const RELAY_PROVIDER: &str = "custom";
+/// 我们代管的 config.toml 上下文表。
+///
+/// 这里没有 `skills`：codex 的 `skills` 配置键是一个三字段结构体
+/// （bundled / include_instructions / max_context_tokens），`[skills.<id>]` 会被
+/// serde 当未知字段丢掉。skill 靠 `$CODEX_HOME/skills/<id>/SKILL.md` 目录发现，
+/// 由 crate::skills 管理。
+const CONTEXT_TABLE_NAMES: [&str; 2] = ["mcp_servers", "plugins"];
 const LEGACY_RELAY_PROVIDERS: &[&str] = &["CodexPlusPlus", "CodexPP"];
 const CC_SWITCH_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CHAT_UPSTREAM_BASE_URL_KEY: &str = "codex_plus_chat_base_url";
@@ -91,7 +98,6 @@ pub struct CodexContextEntry {
 #[serde(rename_all = "camelCase")]
 pub struct CodexContextEntries {
     pub mcp_servers: Vec<CodexContextEntry>,
-    pub skills: Vec<CodexContextEntry>,
     pub plugins: Vec<CodexContextEntry>,
 }
 
@@ -206,10 +212,31 @@ pub fn relay_config_status_from_home(home: &Path) -> RelayConfigStatus {
     let config_path = home.join("config.toml");
     let contents = std::fs::read_to_string(&config_path).unwrap_or_default();
     let auth_contents = std::fs::read_to_string(home.join("auth.json")).unwrap_or_default();
+    let has_auth_api_key = codex_auth_api_key(&auth_contents).is_some();
     let root_provider = root_key_string(&contents, "model_provider");
-    let provider = root_provider
-        .as_ref()
-        .and_then(|provider| table_values(&contents, &format!("model_providers.{provider}")));
+    let provider = root_provider.as_ref().and_then(|provider| {
+        let active = table_values(&contents, &format!("model_providers.{provider}"));
+        if provider != "openai" {
+            return active;
+        }
+
+        if active
+            .as_ref()
+            .is_some_and(|values| provider_values_are_configured(values, has_auth_api_key))
+        {
+            return active;
+        }
+
+        let uses_managed_openai_identity = root_key_string(&contents, OPENAI_BASE_URL_KEY)
+            .is_some_and(|value| value.trim() == managed_openai_base_url());
+        if !uses_managed_openai_identity {
+            return active;
+        }
+
+        table_values(&contents, &format!("model_providers.{RELAY_PROVIDER}"))
+            .filter(|values| provider_values_are_configured(values, has_auth_api_key))
+            .or(active)
+    });
     let requires_openai_auth = provider
         .as_ref()
         .and_then(|values| values.get("requires_openai_auth"))
@@ -228,12 +255,25 @@ pub fn relay_config_status_from_home(home: &Path) -> RelayConfigStatus {
         .unwrap_or(false);
     RelayConfigStatus {
         configured: root_provider.is_some()
-            && (has_bearer_token || codex_auth_api_key(&auth_contents).is_some())
+            && (has_bearer_token || has_auth_api_key)
             && has_base_url,
         requires_openai_auth,
         has_bearer_token,
         config_path: config_path.to_string_lossy().to_string(),
     }
+}
+
+fn provider_values_are_configured(
+    values: &HashMap<String, String>,
+    has_auth_api_key: bool,
+) -> bool {
+    let has_base_url = values
+        .get("base_url")
+        .is_some_and(|value| !unquote_toml_string(value).trim().is_empty());
+    let has_bearer_token = values
+        .get("experimental_bearer_token")
+        .is_some_and(|value| !unquote_toml_string(value).trim().is_empty());
+    has_base_url && (has_bearer_token || has_auth_api_key)
 }
 
 pub fn responses_proxy_configured_in_home(home: &Path) -> bool {
@@ -271,6 +311,24 @@ pub fn apply_relay_config_to_home_with_protocol(
     protocol: RelayProtocol,
     proxy_port: u16,
 ) -> anyhow::Result<RelayApplyResult> {
+    apply_relay_config_to_home_with_session_provider(
+        home,
+        base_url,
+        bearer_token,
+        protocol,
+        proxy_port,
+        RelaySessionProvider::Custom,
+    )
+}
+
+pub fn apply_relay_config_to_home_with_session_provider(
+    home: &Path,
+    base_url: &str,
+    bearer_token: &str,
+    protocol: RelayProtocol,
+    proxy_port: u16,
+    session_provider: RelaySessionProvider,
+) -> anyhow::Result<RelayApplyResult> {
     let base_url = base_url.trim();
     if base_url.is_empty() {
         anyhow::bail!("中转 Base URL 不能为空");
@@ -279,8 +337,17 @@ pub fn apply_relay_config_to_home_with_protocol(
     if bearer_token.is_empty() {
         anyhow::bail!("中转 Key 不能为空");
     }
+    if session_provider == RelaySessionProvider::Openai && protocol != RelayProtocol::Responses {
+        anyhow::bail!("OpenAI 会话身份仅支持 Responses API");
+    }
     let codex_base_url = codex_base_url_for_protocol(base_url, protocol, proxy_port);
-    let updated = upsert_model_provider_config("", &codex_base_url, bearer_token, true)?;
+    let updated = upsert_model_provider_config_with_session_provider(
+        "",
+        &codex_base_url,
+        bearer_token,
+        true,
+        session_provider,
+    )?;
     let auth_contents = serde_json::to_string_pretty(&json!({
         "OPENAI_API_KEY": bearer_token
     }))?;
@@ -344,11 +411,10 @@ pub fn apply_relay_files_to_home_with_context(
     config_contents: &str,
     auth_contents: &str,
     common_config_contents: &str,
-    selection: &RelayContextSelection,
     context_window: &str,
     auto_compact_limit: &str,
 ) -> anyhow::Result<RelayApplyResult> {
-    let selected_common = filter_common_config_for_selection(common_config_contents, selection)?;
+    let selected_common = prepare_common_config_for_apply(common_config_contents)?;
     let config_with_common = merge_common_config_into_config(config_contents, &selected_common)?;
     let config_with_common =
         preserve_unmanaged_live_context_entries(home, &config_with_common, common_config_contents)?;
@@ -363,7 +429,7 @@ pub fn apply_relay_profile_files_to_home_with_context(
     common_config_contents: &str,
 ) -> anyhow::Result<RelayApplyResult> {
     let selected_common = if profile.use_common_config {
-        filter_common_config_for_profile(common_config_contents, profile)?
+        prepare_common_config_for_apply(common_config_contents)?
     } else {
         String::new()
     };
@@ -387,7 +453,7 @@ pub fn apply_relay_profile_to_home_with_switch_rules(
     common_config_contents: &str,
 ) -> anyhow::Result<RelayApplyResult> {
     let selected_common = if profile.use_common_config {
-        filter_common_config_for_profile(common_config_contents, profile)?
+        prepare_common_config_for_apply(common_config_contents)?
     } else {
         String::new()
     };
@@ -417,7 +483,7 @@ pub fn apply_relay_profile_config_to_home_with_context(
     common_config_contents: &str,
 ) -> anyhow::Result<RelayApplyResult> {
     let selected_common = if profile.use_common_config {
-        filter_common_config_for_selection(common_config_contents, &profile.context_selection)?
+        prepare_common_config_for_apply(common_config_contents)?
     } else {
         String::new()
     };
@@ -462,6 +528,24 @@ pub fn apply_pure_api_config_to_home_with_protocol(
     protocol: RelayProtocol,
     proxy_port: u16,
 ) -> anyhow::Result<RelayApplyResult> {
+    apply_pure_api_config_to_home_with_session_provider(
+        home,
+        base_url,
+        bearer_token,
+        protocol,
+        proxy_port,
+        RelaySessionProvider::Custom,
+    )
+}
+
+pub fn apply_pure_api_config_to_home_with_session_provider(
+    home: &Path,
+    base_url: &str,
+    bearer_token: &str,
+    protocol: RelayProtocol,
+    proxy_port: u16,
+    session_provider: RelaySessionProvider,
+) -> anyhow::Result<RelayApplyResult> {
     let base_url = base_url.trim();
     if base_url.is_empty() {
         anyhow::bail!("中转 Base URL 不能为空");
@@ -470,8 +554,17 @@ pub fn apply_pure_api_config_to_home_with_protocol(
     if bearer_token.is_empty() {
         anyhow::bail!("中转 Key 不能为空");
     }
+    if session_provider == RelaySessionProvider::Openai && protocol != RelayProtocol::Responses {
+        anyhow::bail!("OpenAI 会话身份仅支持 Responses API");
+    }
     let codex_base_url = codex_base_url_for_protocol(base_url, protocol, proxy_port);
-    let updated = upsert_model_provider_config("", &codex_base_url, bearer_token, false)?;
+    let updated = upsert_model_provider_config_with_session_provider(
+        "",
+        &codex_base_url,
+        bearer_token,
+        false,
+        session_provider,
+    )?;
     let auth_contents = serde_json::to_string_pretty(&json!({
         "OPENAI_API_KEY": bearer_token
     }))?;
@@ -609,6 +702,19 @@ fn update_remote_control_openai_base_url(doc: &mut DocumentMut, enabled: bool) {
     }
 }
 
+fn active_session_provider_id(doc: &DocumentMut) -> String {
+    active_provider_id(doc).unwrap_or_else(|| RELAY_PROVIDER.to_string())
+}
+
+pub fn relay_session_provider_from_config(contents: &str) -> RelaySessionProvider {
+    parse_toml_document(contents)
+        .ok()
+        .and_then(|doc| active_provider_id(&doc))
+        .filter(|provider| provider == "openai")
+        .map(|_| RelaySessionProvider::Openai)
+        .unwrap_or_default()
+}
+
 fn remove_managed_remote_control_openai_base_url(contents: &str) -> anyhow::Result<String> {
     let mut doc = parse_toml_document(contents)?;
     update_remote_control_openai_base_url(&mut doc, false);
@@ -630,7 +736,7 @@ pub fn clear_relay_config_to_home_with_auth(
     };
     let config_path = home.join("config.toml");
     let existing = std::fs::read_to_string(&config_path).unwrap_or_default();
-    let mut without_tables = remove_table(&existing, &format!("model_providers.{RELAY_PROVIDER}"));
+    let mut without_tables = existing;
     for legacy_provider in LEGACY_RELAY_PROVIDERS {
         without_tables = remove_table(
             &without_tables,
@@ -643,9 +749,13 @@ pub fn clear_relay_config_to_home_with_auth(
         "model_provider",
         "model_catalog_json",
         "base_url",
+        "experimental_bearer_token",
+        "env_key",
+        "requires_openai_auth",
     ] {
         updated = remove_root_key(&updated, key);
     }
+    updated = remove_model_provider_auth_fields(&updated, RELAY_PROVIDER)?;
     updated = remove_managed_remote_control_openai_base_url(&updated)?;
     let backup_path = write_codex_live_atomic(home, Some(&updated), auth_bytes.as_deref())?;
     let status = relay_config_status_from_home(home);
@@ -654,6 +764,25 @@ pub fn clear_relay_config_to_home_with_auth(
         backup_path,
         configured: status.configured,
     })
+}
+
+fn remove_model_provider_auth_fields(contents: &str, provider_id: &str) -> anyhow::Result<String> {
+    let mut doc = parse_toml_document(contents)?;
+    if let Some(provider) = doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_mut)
+        .and_then(|providers| providers.get_mut(provider_id))
+        .and_then(Item::as_table_mut)
+    {
+        for key in [
+            "experimental_bearer_token",
+            "env_key",
+            "requires_openai_auth",
+        ] {
+            provider.remove(key);
+        }
+    }
+    Ok(normalize_optional_toml(doc))
 }
 
 fn pure_api_auth_json_removed(home: &Path) -> anyhow::Result<Option<Vec<u8>>> {
@@ -811,7 +940,6 @@ pub fn list_context_entries_from_common_config(
     let doc = parse_toml_document(&normalized)?;
     Ok(CodexContextEntries {
         mcp_servers: list_context_entries_for_table(&doc, "mcp_servers"),
-        skills: list_context_entries_for_table(&doc, "skills"),
         plugins: list_context_entries_for_table(&doc, "plugins"),
     })
 }
@@ -857,29 +985,18 @@ pub fn delete_context_entry_from_common_config(
     Ok(normalize_optional_toml(doc))
 }
 
-pub fn filter_common_config_for_selection(
-    common_config: &str,
-    selection: &RelayContextSelection,
-) -> anyhow::Result<String> {
-    let sanitized_common = sanitize_common_config_contents(common_config);
+/// 剥掉通用配置里供应商各自持有的键，丢掉历史遗留的 `[skills.<id>]` 死表，
+/// 再丢掉标记为 `enabled = false` 的上下文条目，得到本次切换真正要合并进
+/// config.toml 的那份通用配置。
+///
+/// 条目启停以条目自身的 `enabled` 为唯一依据——旧版还存在一份「按供应商勾选」的
+/// selection，两套机制重叠，空的 selection 会把 live config 里的 MCP 全清空，已移除。
+pub fn prepare_common_config_for_apply(common_config: &str) -> anyhow::Result<String> {
+    let sanitized_common =
+        strip_legacy_skill_tables(&sanitize_common_config_contents(common_config));
     let mut filtered = parse_toml_document(&sanitized_common)?;
-    filter_context_tables_for_selection(filtered.as_table_mut(), selection);
     remove_disabled_context_tables(filtered.as_table_mut());
     Ok(normalize_optional_toml(filtered))
-}
-
-fn filter_common_config_for_profile(
-    common_config: &str,
-    profile: &RelayProfile,
-) -> anyhow::Result<String> {
-    if profile.context_selection_initialized {
-        filter_common_config_for_selection(common_config, &profile.context_selection)
-    } else {
-        let sanitized_common = sanitize_common_config_contents(common_config);
-        let mut filtered = parse_toml_document(&sanitized_common)?;
-        remove_disabled_context_tables(filtered.as_table_mut());
-        Ok(normalize_optional_toml(filtered))
-    }
 }
 
 pub fn sync_live_config_context_entries(
@@ -921,42 +1038,8 @@ fn preserve_unmanaged_live_context_entries(
     Ok(normalize_optional_toml(target_doc))
 }
 
-fn filter_context_tables_for_selection(
-    table: &mut toml_edit::Table,
-    selection: &RelayContextSelection,
-) {
-    filter_context_table_for_ids(table, "mcp_servers", &selection.mcp_servers);
-    filter_context_table_for_ids(table, "skills", &selection.skills);
-    filter_context_table_for_ids(table, "plugins", &selection.plugins);
-}
-
-fn filter_context_table_for_ids(
-    table: &mut toml_edit::Table,
-    table_name: &str,
-    selected_ids: &[String],
-) {
-    let Some(item) = table.get_mut(table_name) else {
-        return;
-    };
-    let Some(context_table) = item.as_table_mut() else {
-        return;
-    };
-    let selected = selected_ids
-        .iter()
-        .map(|id| id.trim())
-        .filter(|id| !id.is_empty())
-        .collect::<HashSet<_>>();
-    let remove_ids = context_table
-        .iter()
-        .filter_map(|(id, _)| (!selected.contains(id)).then_some(id.to_string()))
-        .collect::<Vec<_>>();
-    for id in remove_ids {
-        context_table.remove(&id);
-    }
-}
-
 fn merge_managed_context_tables(target: &mut toml_edit::Table, managed: &toml_edit::Table) {
-    for table_name in ["mcp_servers", "skills", "plugins"] {
+    for table_name in CONTEXT_TABLE_NAMES {
         merge_managed_context_table(target, managed, table_name);
     }
 }
@@ -985,7 +1068,7 @@ fn merge_managed_context_table(
 }
 
 fn remove_managed_context_entries(target: &mut toml_edit::Table, managed: &toml_edit::Table) {
-    for table_name in ["mcp_servers", "skills", "plugins"] {
+    for table_name in CONTEXT_TABLE_NAMES {
         remove_managed_context_entry_table(target, managed, table_name);
     }
 }
@@ -1014,7 +1097,7 @@ fn preserve_unmanaged_context_tables(
     live: &toml_edit::Table,
     managed: &toml_edit::Table,
 ) {
-    for table_name in ["mcp_servers", "skills", "plugins"] {
+    for table_name in CONTEXT_TABLE_NAMES {
         preserve_unmanaged_context_table(target, live, managed, table_name);
     }
 }
@@ -1055,7 +1138,7 @@ fn preserve_unmanaged_context_table(
 }
 
 fn remove_disabled_context_tables(table: &mut toml_edit::Table) {
-    for table_name in ["mcp_servers", "skills", "plugins"] {
+    for table_name in CONTEXT_TABLE_NAMES {
         let Some(item) = table.get_mut(table_name) else {
             continue;
         };
@@ -1290,6 +1373,41 @@ fn normalize_text_toml(contents: String) -> String {
     }
 }
 
+/// 丢掉历史遗留的 `[skills.<id>]` 表。
+///
+/// 这些条目是早期把 skill 当 config.toml 注册表管留下来的，codex 从来没读过它们
+/// （`skills` 是个三字段结构体，`[skills.<id>]` 会被当未知字段丢掉）。skill 现在由
+/// `$CODEX_HOME/skills/` 目录管，这里顺手把死数据从用户配置里清掉。
+///
+/// 注意只删 `[skills.<id>]` 子表，`[skills]` 本身是合法配置（bundled /
+/// include_instructions / max_context_tokens），得留着。
+pub fn strip_legacy_skill_tables(contents: &str) -> String {
+    let Ok(mut doc) = parse_toml_document(contents) else {
+        return contents.to_string();
+    };
+    let Some(skills) = doc.as_table_mut().get_mut("skills") else {
+        return contents.to_string();
+    };
+    let Some(table) = skills.as_table_like_mut() else {
+        return contents.to_string();
+    };
+    let legacy_ids: Vec<String> = table
+        .iter()
+        .filter(|(_, item)| item.is_table_like())
+        .map(|(id, _)| id.to_string())
+        .collect();
+    if legacy_ids.is_empty() {
+        return contents.to_string();
+    }
+    for id in legacy_ids {
+        table.remove(&id);
+    }
+    if table.is_empty() {
+        doc.as_table_mut().remove("skills");
+    }
+    normalize_optional_toml(doc)
+}
+
 pub fn normalize_config_text(contents: &str) -> String {
     normalize_duplicate_toml_text(contents)
 }
@@ -1423,14 +1541,15 @@ fn normalize_config_text_for_write(config_text: &str) -> String {
 
 fn preserve_live_desktop_settings(home: &Path, config_text: &str) -> anyhow::Result<String> {
     let normalized = normalize_config_text_for_write(config_text);
+    let mut target_doc = parse_toml_document(&normalized)?;
+    remove_unsupported_approval_policies(&mut target_doc);
     let live_text = read_optional_text(&home.join("config.toml"))?;
     if live_text.trim().is_empty() {
-        return Ok(normalized);
+        return Ok(normalize_optional_toml(target_doc));
     }
     let Ok(live_doc) = parse_toml_document(&live_text) else {
-        return Ok(normalized);
+        return Ok(normalize_optional_toml(target_doc));
     };
-    let mut target_doc = parse_toml_document(&normalized)?;
     if let Some(live_desktop) = live_doc.get("desktop").cloned() {
         if !live_desktop.is_none() {
             merge_toml_item(&mut target_doc["desktop"], &live_desktop);
@@ -1441,6 +1560,7 @@ fn preserve_live_desktop_settings(home: &Path, config_text: &str) -> anyhow::Res
             merge_toml_item(&mut target_doc[key], &live_value);
         }
     }
+    remove_unsupported_approval_policies(&mut target_doc);
     let context_usage_configured = target_doc
         .get("desktop")
         .and_then(Item::as_table)
@@ -1455,6 +1575,41 @@ fn preserve_live_desktop_settings(home: &Path, config_text: &str) -> anyhow::Res
         }
     }
     Ok(normalize_optional_toml(target_doc))
+}
+
+fn remove_unsupported_approval_policies(doc: &mut DocumentMut) -> bool {
+    let mut changed = false;
+    if doc.get("approval_policy").and_then(Item::as_str) == Some("untrusted") {
+        doc.as_table_mut().remove("approval_policy");
+        changed = true;
+    }
+    if let Some(profiles) = doc.get_mut("profiles").and_then(Item::as_table_mut) {
+        for (_, profile) in profiles.iter_mut() {
+            let Some(profile) = profile.as_table_mut() else {
+                continue;
+            };
+            if profile.get("approval_policy").and_then(Item::as_str) == Some("untrusted") {
+                profile.remove("approval_policy");
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+pub fn cleanup_unsupported_approval_policies_in_home(home: &Path) -> anyhow::Result<bool> {
+    let config_path = home.join("config.toml");
+    let existing = match std::fs::read_to_string(&config_path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let mut doc = parse_toml_document(&existing)?;
+    if !remove_unsupported_approval_policies(&mut doc) {
+        return Ok(false);
+    }
+    crate::settings::atomic_write(&config_path, normalize_optional_toml(doc).as_bytes())?;
+    Ok(true)
 }
 
 fn validate_auth_json(auth_bytes: &[u8], path: &Path) -> anyhow::Result<()> {
@@ -2009,7 +2164,6 @@ fn table_body_to_string(table: &Table) -> String {
 fn context_table_name(kind: &str) -> anyhow::Result<&'static str> {
     match kind {
         "mcp" | "mcpServer" | "mcpServers" => Ok("mcp_servers"),
-        "skill" | "skills" => Ok("skills"),
         "plugin" | "plugins" => Ok("plugins"),
         other => anyhow::bail!("未知上下文类型：{other}"),
     }
@@ -2018,7 +2172,6 @@ fn context_table_name(kind: &str) -> anyhow::Result<&'static str> {
 fn context_kind_name(table: &str) -> &'static str {
     match table {
         "mcp_servers" => "mcp",
-        "skills" => "skill",
         "plugins" => "plugin",
         _ => "unknown",
     }
@@ -2174,7 +2327,12 @@ fn set_experimental_bearer_token_in_config(
     api_key: &str,
 ) -> anyhow::Result<String> {
     let mut doc = parse_toml_document(config_contents)?;
-    let provider_id = active_or_default_provider_id(&doc);
+    let session_provider_id = active_provider_id(&doc);
+    let provider_id = if session_provider_id.as_deref() == Some("openai") {
+        RELAY_PROVIDER.to_string()
+    } else {
+        active_or_default_provider_id(&doc)
+    };
     let provider = ensure_provider_table(&mut doc, &provider_id)?;
     if api_key.trim().is_empty() {
         provider.remove("experimental_bearer_token");
@@ -2307,12 +2465,33 @@ pub fn relay_profile_api_key(profile: &RelayProfile) -> String {
 
 fn complete_relay_profile_config(profile: &RelayProfile) -> anyhow::Result<String> {
     let mut doc = parse_toml_document(&profile.config_contents)?;
+    let session_provider_id = active_session_provider_id(&doc);
+    let uses_openai_provider = session_provider_id == "openai";
+    if uses_openai_provider && profile.protocol != RelayProtocol::Responses {
+        anyhow::bail!("OpenAI 会话身份仅支持 Responses API");
+    }
     update_remote_control_openai_base_url(
         &mut doc,
-        profile.relay_mode == crate::settings::RelayMode::Official && profile.official_mix_api_key,
+        uses_openai_provider
+            || (profile.relay_mode == crate::settings::RelayMode::Official
+                && profile.official_mix_api_key),
     );
+    // `openai` is the Remote session identity, while the actual relay
+    // transport remains in `model_providers.custom`.
     let provider_id = active_or_default_provider_id(&doc);
-    set_provider_id(&mut doc, &provider_id);
+    let transport_provider_id = if uses_openai_provider {
+        RELAY_PROVIDER.to_string()
+    } else {
+        provider_id.clone()
+    };
+    set_provider_id(
+        &mut doc,
+        if uses_openai_provider {
+            "openai"
+        } else {
+            &provider_id
+        },
+    );
 
     let mut model = relay_profile_model(profile);
     // 若用户未填写默认模型，但 model_list 有内容，则取第一条作为默认 model，
@@ -2337,20 +2516,20 @@ fn complete_relay_profile_config(profile: &RelayProfile) -> anyhow::Result<Strin
     let base_url = relay_profile_base_url(profile);
     let api_key = relay_profile_api_key(profile);
     doc.as_table_mut().remove(CHAT_UPSTREAM_BASE_URL_KEY);
-    retain_only_provider_table(&mut doc, &provider_id);
+    retain_only_provider_table(&mut doc, &transport_provider_id);
     for legacy_provider in LEGACY_RELAY_PROVIDERS {
-        if provider_id != *legacy_provider {
+        if transport_provider_id != *legacy_provider {
             remove_provider_table(&mut doc, legacy_provider);
         }
     }
-    let provider = ensure_provider_table(&mut doc, &provider_id)?;
+    let provider = ensure_provider_table(&mut doc, &transport_provider_id)?;
     if provider
         .get("name")
         .and_then(Item::as_str)
         .map(str::trim)
         .is_none_or(str::is_empty)
     {
-        provider["name"] = toml_edit::value(provider_id.as_str());
+        provider["name"] = toml_edit::value(transport_provider_id.as_str());
     }
     if provider
         .get("wire_api")
@@ -2450,13 +2629,18 @@ pub fn normalize_relay_profile_for_storage(profile: &mut RelayProfile) -> anyhow
     {
         profile.config_contents = complete_relay_profile_config(profile)?;
     }
+    // PureApi 模式下 `complete_relay_profile_config` 会移除 config.toml 里的
+    // `experimental_bearer_token`，auth.json 是 key 唯一的落点。
+    // 这里过去还要求 auth_contents 为空，于是「非空但不含 OPENAI_API_KEY」的 auth.json
+    // （例如退出 ChatGPT 登录后残留的 tokens/last_refresh）会把写入挡掉，
+    // key 两边都没有，Codex CLI 只能回退到 OPENAI_API_KEY 环境变量，上游返回 401（issue #1965）。
     if profile.relay_mode == crate::settings::RelayMode::PureApi
-        && profile.auth_contents.trim().is_empty()
         && !source_api_key.trim().is_empty()
     {
-        profile.auth_contents = serde_json::to_string_pretty(&json!({
-            "OPENAI_API_KEY": source_api_key.trim()
-        }))?;
+        profile.auth_contents =
+            set_openai_api_key_in_auth_contents(&profile.auth_contents, &source_api_key)
+                // auth.json 本身已损坏时保不住原内容，但 key 必须有落点，直接重建。
+                .or_else(|_| set_openai_api_key_in_auth_contents("", &source_api_key))?;
     }
     if profile.relay_mode == crate::settings::RelayMode::Official {
         profile.auth_contents = remove_openai_api_key_from_auth_contents(&profile.auth_contents)?;
@@ -2561,20 +2745,30 @@ fn provider_string_from_config(config_contents: &str, key: &str) -> Option<Strin
 fn experimental_bearer_token_from_config(config_contents: &str) -> anyhow::Result<Option<String>> {
     let doc = parse_toml_document(config_contents)?;
     if let Some(provider_id) = active_provider_id(&doc) {
-        if let Some(token) = doc
-            .get("model_providers")
-            .and_then(Item::as_table)
-            .and_then(|providers| providers.get(&provider_id))
-            .and_then(Item::as_table)
-            .and_then(|provider| provider.get("experimental_bearer_token"))
-            .and_then(Item::as_str)
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
-        {
-            return Ok(Some(token.to_string()));
+        if let Some(token) = provider_token_from_table(&doc, &provider_id) {
+            return Ok(Some(token));
+        }
+        // OpenAI is the session identity, while Codex++ keeps relay
+        // credentials in the custom transport table.
+        if provider_id == "openai" {
+            if let Some(token) = provider_token_from_table(&doc, RELAY_PROVIDER) {
+                return Ok(Some(token));
+            }
         }
     }
     Ok(None)
+}
+
+fn provider_token_from_table(doc: &DocumentMut, provider_id: &str) -> Option<String> {
+    doc.get("model_providers")
+        .and_then(Item::as_table)
+        .and_then(|providers| providers.get(provider_id))
+        .and_then(Item::as_table)
+        .and_then(|provider| provider.get("experimental_bearer_token"))
+        .and_then(Item::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToString::to_string)
 }
 
 fn remove_experimental_bearer_token_from_config(config_contents: &str) -> anyhow::Result<String> {
@@ -2945,15 +3139,31 @@ fn root_key_value<'a>(contents: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
-fn upsert_model_provider_config(
+fn upsert_model_provider_config_with_session_provider(
     contents: &str,
     base_url: &str,
     bearer_token: &str,
     requires_openai_auth: bool,
+    session_provider: RelaySessionProvider,
 ) -> anyhow::Result<String> {
     let mut doc = parse_toml_document(contents)?;
-    let provider_id = active_or_default_provider_id(&doc);
-    set_provider_id(&mut doc, &provider_id);
+    let provider_id = if session_provider == RelaySessionProvider::Openai {
+        RELAY_PROVIDER.to_string()
+    } else {
+        active_or_default_provider_id(&doc)
+    };
+    set_provider_id(
+        &mut doc,
+        if session_provider == RelaySessionProvider::Openai {
+            session_provider.as_str()
+        } else {
+            &provider_id
+        },
+    );
+    update_remote_control_openai_base_url(
+        &mut doc,
+        session_provider == RelaySessionProvider::Openai,
+    );
     for legacy_provider in LEGACY_RELAY_PROVIDERS {
         remove_provider_table(&mut doc, legacy_provider);
     }

@@ -70,6 +70,8 @@ pub fn run() {
             commands::restart_codex_plus,
             commands::load_settings,
             commands::save_settings,
+            commands::load_grok_config,
+            commands::save_grok_config,
             commands::weixin_connect_qr_start,
             commands::weixin_connect_qr_status,
             commands::weixin_connect_status,
@@ -104,6 +106,9 @@ pub fn run() {
             commands::confirm_pending_provider_import,
             commands::dismiss_pending_provider_import,
             commands::list_local_sessions,
+            commands::import_local_session,
+            commands::load_pending_session_share,
+            commands::import_session_url,
             commands::list_zed_remote_projects,
             commands::open_zed_remote,
             commands::forget_zed_remote_project,
@@ -117,6 +122,16 @@ pub fn run() {
             commands::install_market_script,
             commands::set_user_script_enabled,
             commands::delete_user_script,
+            commands::refresh_skill_catalog,
+            commands::list_installed_skills,
+            commands::install_skill,
+            commands::update_skill,
+            commands::set_skill_enabled,
+            commands::uninstall_skill,
+            commands::restore_skill_backup,
+            commands::delete_skill_backup,
+            commands::upsert_skill_repo,
+            commands::delete_skill_repo,
             commands::open_external_url,
             commands::install_entrypoints,
             commands::uninstall_entrypoints,
@@ -150,6 +165,10 @@ pub fn run() {
             commands::sync_live_context_entries,
             commands::upsert_context_entry,
             commands::delete_context_entry,
+            commands::parse_mcp_entry,
+            commands::build_mcp_entry,
+            commands::preview_mcp_servers_json,
+            commands::import_mcp_servers_json,
             commands::extract_relay_common_config,
             commands::test_relay_profile,
             commands::diagnose_relay_profile,
@@ -170,7 +189,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = event {
                 for url in urls {
-                    if handle_dream_skin_url(url.as_str()) {
+                    if handle_session_share_url(url.as_str()) || handle_dream_skin_url(url.as_str())
+                    {
                         show_main_window(app_handle);
                     }
                 }
@@ -202,6 +222,28 @@ pub fn handle_dream_skin_url(url: &str) -> bool {
         Err(error) => {
             let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
                 "manager.dream_skin_link.failed",
+                serde_json::json!({ "error": error.to_string() }),
+            );
+            false
+        }
+    }
+}
+
+pub fn handle_session_share_url(url: &str) -> bool {
+    if !url.starts_with("codexplusplus://session") {
+        return false;
+    }
+    match codex_plus_core::session_share::save_pending_session_share_from_protocol_url(url) {
+        Ok(_) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "manager.session_share.pending",
+                serde_json::json!({}),
+            );
+            true
+        }
+        Err(error) => {
+            let _ = codex_plus_core::diagnostic_log::append_diagnostic_log(
+                "manager.session_share.failed",
                 serde_json::json!({ "error": error.to_string() }),
             );
             false
