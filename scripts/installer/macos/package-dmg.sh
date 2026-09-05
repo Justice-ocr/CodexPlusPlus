@@ -264,17 +264,17 @@ fi
 # -force；-force 后卷已消失同样视为成功。
 detach_volume() {
   local attempt
-  for attempt in 1 2 3; do
+  for attempt in 1 2 3 4 5 6; do
     if hdiutil detach "$MOUNT_POINT" >/dev/null; then
       return 0
     fi
     if [ ! -e "$MOUNT_POINT" ]; then
       return 0
     fi
-    sleep "$((attempt * 2))"
+    sleep "$((attempt * 3))"
   done
-  hdiutil detach "$MOUNT_POINT" -force >/dev/null 2>&1
-  [ ! -e "$MOUNT_POINT" ]
+  hdiutil detach "$MOUNT_POINT" -force >/dev/null 2>&1 || true
+  [ ! -e "$MOUNT_POINT" ] || ! hdiutil info 2>/dev/null | grep -Fq -- "$MOUNT_POINT"
 }
 
 if ! detach_volume; then
@@ -286,19 +286,19 @@ MOUNT_DEVICE=""
 
 # 上一步 detach 可能触发延迟弹出：卷目录已消失但磁盘镜像仍在弹出中，
 # convert 会暂时报 Resource temporarily unavailable——退避重试等它完成。
-for attempt in 1 2 3 4 5; do
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
   if hdiutil convert "$DMG_WORK_PATH" -format UDZO -ov -o "$DMG"; then
     DMG_CREATED=true
     break
   fi
 
-  if [ "$attempt" -lt 5 ]; then
-    sleep "$((attempt * 3))"
+  if [ "$attempt" -lt 10 ]; then
+    sleep "$((attempt * 4))"
   fi
 done
 
 if [ "$DMG_CREATED" != true ]; then
-  echo "error: failed to create DMG after 5 attempts" >&2
+  echo "error: failed to create DMG after 10 attempts" >&2
   exit 1
 fi
 
