@@ -468,7 +468,12 @@ async fn runtime_routes_keep_user_script_inventory_shape() {
 
 #[tokio::test]
 async fn runtime_status_devtools_and_repair_routes_are_dispatched() {
-    let ctx = test_context();
+    let runtime = Arc::new(FakeRuntime::default());
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::default()),
+        runtime.clone(),
+        Arc::new(FakeData::default()),
+    );
 
     assert_eq!(
         handle_bridge_request(ctx.clone(), "/devtools/open", json!({})).await,
